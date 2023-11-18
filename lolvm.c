@@ -85,9 +85,7 @@ void evaluate(unsigned char *instrs)
 
 	#define STACK(offset) (&stack[sptr - (offset)])
 
-	while (1) {
-		printf("%s(x%02x): iptr: %zu, sptr: %zu, cptr: %zu, instr: \n", lolvm_op_name(instrs[iptr]), instrs[iptr], iptr, sptr, cptr);
-		switch ((enum lolvm_op)instrs[iptr++]) {
+	while (1) switch ((enum lolvm_op)instrs[iptr++]) {
 #define X(name, n, code...) case LOL_ ## name: code iptr += n; break;
 #include "instructions.x.h"
 #undef X
@@ -129,7 +127,7 @@ void evaluate(unsigned char *instrs)
 
 	case LOL_HALT:
 		return;
-	}}
+	}
 }
 
 int main ()
@@ -140,10 +138,5 @@ int main ()
 		LOL_DBG_PRINT_I32, 4, 0,
 		LOL_HALT,
 	};
-
-	unsigned char bcbuf[1024 * 1024];
-	memset(bcbuf, 0x7c, sizeof(bcbuf));
-	memcpy(bcbuf, bytecode, sizeof(bytecode));
-
-	evaluate(bcbuf);
+	evaluate(bytecode);
 }

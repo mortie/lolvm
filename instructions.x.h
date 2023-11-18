@@ -1,3 +1,7 @@
+#ifndef X
+#define X(name, n, code...)
+#endif
+
 X(SETI_32, 6, {
 	uint32_t val = OP_U32(2);
 	memcpy(STACK(OP_OFFSET(0)), &val, 4);
