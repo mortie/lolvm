@@ -7,13 +7,14 @@
 #define LOLVM_OPS \
 	X(SETI_32) /* dest @, imm x32 */ \
 	X(SETI_64) /* dest @, imm x64 */ \
+	X(COPY_32) /* dest @, src @ */ \
+	X(COPY_64) /* dest @, src @ */ \
 	X(ADD_32)  /* dest @, a @, b @ */ \
 	X(ADD_64)  /* dest @, a @, b @ */ \
 	X(ADDI_32) /* dest @, a @, imm b x32 */ \
 	X(ADDI_64) /* dest @, a @, imm b x64 */ \
 	/* */ \
 	X(BEGIN_FRAME)   /* stack_space_bytes @ */ \
-	X(END_FRAME)     /* stack_space_bytes @ */ \
 	X(CALL)          /* jump_target u32 */ \
 	X(RETURN)        /* */ \
 	X(DBG_PRINT_I32) /* val @ */ \
@@ -67,11 +68,18 @@ static uint32_t parse_u64(unsigned char *ptr)
 		((uint64_t)ptr[7] << 56);
 }
 
+struct stack_frame {
+	size_t bptr;
+	size_t sptr;
+	size_t iptr;
+};
+
 void evaluate(unsigned char *instrs)
 {
 	unsigned char stack[1024];
-	uint32_t callstack[64];
+	struct stack_frame callstack[64];
 	size_t sptr = 0;
+	size_t bptr = 0;
 	size_t iptr = 0;
 	size_t cptr = 0;
 
@@ -83,7 +91,7 @@ void evaluate(unsigned char *instrs)
 	#define OP_U64(offset) parse_u64(&instrs[iptr + offset])
 	#define OP_I64(offset) ((uint64_t)OP_U64(offset))
 
-	#define STACK(offset) (&stack[sptr - (offset)])
+	#define STACK(offset) (&stack[bptr - (offset)])
 
 	while (1) switch ((enum lolvm_op)instrs[iptr++]) {
 #define X(name, n, code...) case LOL_ ## name: code iptr += n; break;
@@ -95,18 +103,19 @@ void evaluate(unsigned char *instrs)
 		iptr += 2;
 		break;
 
-	case LOL_END_FRAME:
-		sptr -= OP_OFFSET(0);
-		iptr += 2;
-		break;
-
 	case LOL_CALL:
-		callstack[cptr++] = iptr + 4;
+		callstack[cptr].bptr = bptr;
+		callstack[cptr].sptr = sptr;
+		callstack[cptr].iptr = iptr + 4;
+		cptr += 1;
 		iptr = OP_U32(0);
 		break;
 
 	case LOL_RETURN:
-		iptr = callstack[--cptr];
+		cptr -= 1;
+		bptr = callstack[cptr].bptr;
+		sptr = callstack[cptr].sptr;
+		iptr = callstack[cptr].iptr;
 		break;
 
 	case LOL_DBG_PRINT_I32: {

@@ -12,6 +12,14 @@ X(SETI_64, 10, {
 	memcpy(STACK(OP_OFFSET(0)), &val, 4);
 })
 
+X(COPY_32, 4, {
+	memcpy(STACK(OP_OFFSET(0)), STACK(OP_OFFSET(2)), 4);
+})
+
+X(COPY_64, 4, {
+	memcpy(STACK(OP_OFFSET(0)), STACK(OP_OFFSET(2)), 8);
+})
+
 X(ADD_32, 6, {
 	uint32_t a;
 	memcpy(&a, STACK(OP_OFFSET(2)), 4);

@@ -85,12 +85,14 @@ grammar Lol {
 enum LolOp <
 	SETI_32
 	SETI_64
+	COPY_32
+	COPY_64
 	ADD_32
 	ADD_64
 	ADDI_32
 	ADDI_64
+
 	BEGIN_FRAME
-	END_FRAME
 	CALL
 	RETURN
 	DBG_PRINT_I32
@@ -134,7 +136,7 @@ class StackFrame {
 	has LocalVar %.vars is rw;
 	has LocalVar @.temps is rw;
 	has Int $.idx is rw = 0;
-	has Int $.max-idx is rw = 0;
+	has Int $.max-size is rw = 0;
 
 	method has(Str $name) {
 		%.vars{$name}:exists;
@@ -160,7 +162,7 @@ class StackFrame {
 		);
 		%.vars{$name} = $var;
 		$.idx += $type.size;
-		$.max-idx += $type.size;
+		$.max-size += $type.size;
 		$var;
 	}
 
@@ -171,8 +173,8 @@ class StackFrame {
 			temp => True,
 		);
 		$.idx += $type.size;
-		if $.idx > $.max-idx {
-			$.max-idx = $.idx;
+		if $.idx > $.max-size {
+			$.max-size = $.idx;
 		}
 		@.temps.append($var);
 		$var;
@@ -318,50 +320,58 @@ class Program {
 		}
 	}
 
-	method compile-expr($frame, $expr) returns ExprResult {
+	method compile-expr($frame, $expr, Buf $out) returns LocalVar {
 		if $expr<num-literal> {
 			my $temp = $frame.push-temp(%builtin-types<int>);
-			my $code = Buf.new(
+			$out.append(
 				LolOp::SETI_32.Int, $temp.index, 0, +$expr<num-literal>.Str, 0, 0, 0);
-			ExprResult.new(code => $code, var => $temp);
+			$temp;
+		} elsif $expr<identifier> {
+			$frame.get($expr<identifier>.Str);
 		} else {
-			die "Bad expr";
+			die "Bad expression '$expr'";
 		}
 	}
 
-	method compile-statm($frame, $statm) returns Buf {
+	method compile-statm($frame, $statm, Buf $out) {
 		if $statm<block>:exists {
-			$.compile-block($frame, $statm<block>);
+			$.compile-block($frame, $statm<block>, $out);
+		}elsif $statm<assign-statm> {
+			my $name = $statm<assign-statm><identifier>.Str;
+			my $dest-var = $frame.get($name);
+			my $expr = $statm<assign-statm><expression>;
+			my $src-var = $.compile-expr($frame, $expr, $out);
+			$out.append(LolOp::COPY_32, $dest-var.index, 0, $src-var.index, 0);
+			$frame.pop-if-temp($src-var);
 		} elsif $statm<dbg-print-statm>:exists {
-			my $res = $.compile-expr($frame, $statm<dbg-print-statm><expression>);
-			$res.code.append(LolOp::DBG_PRINT_I32, $res.var.index, 0);
-			$frame.pop-if-temp($res.var);
-			$res.code;
+			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out);
+			$out.append(LolOp::DBG_PRINT_I32, $var.index, 0);
+			$frame.pop-if-temp($var);
 		} else {
-			die "Bad statm";
+			die "Bad statement '$statm'";
 		}
 	}
 
-	method compile-block($frame, $block) returns Buf {
-		my $code = Buf.new();
+	method compile-block($frame, $block, Buf $out) {
 		for $block<statement> -> $statm {
-			$code.append($.compile-statm($frame, $statm));
+			$.compile-statm($frame, $statm, $out);
 		}
-		$code;
 	}
 
-	method compile-function($name, $func) returns Buf {
+	method compile-function($name, $func, Buf $out) {
+		$out.append(LolOp::BEGIN_FRAME.Int);
+		my $stack-size-fixup-idx = +$out;
+		$out.append(0, 0);
+
 		my $frame = StackFrame.new();
 		$.populate-stack-frame($frame, $func.body<statement>);
-		my $code = $.compile-block($frame, $func.body);
-		$code.prepend(LolOp::BEGIN_FRAME.Int, $frame.max-idx, 0);
-		$code.append(LolOp::RETURN.Int);
-		$code;
+		$.compile-block($frame, $func.body, $out);
+
+		$out[$stack-size-fixup-idx] = $frame.max-size;
+		$out.append(LolOp::RETURN.Int);
 	}
 
-	method compile-functions() returns Buf {
-		my $code = Buf.new(LolOp::CALL.Int, 0, 0, 0, 0, LolOp::HALT.Int);
-
+	method compile-functions(Buf $out) {
 		if not %.funcs<main>:exists {
 			die "Missing main function";
 		}
@@ -373,14 +383,17 @@ class Program {
 			die "Function main must have no parameters";
 		}
 
+		$out.append(LolOp::CALL.Int);
+		my $main-offset-fixup-idx = +$out;
+		$out.append(0, 0, 0, 0, LolOp::HALT.Int);
+
 		for %.funcs.kv -> $name, $func {
 			say "compiling function $name";
-			$func.offset = +$code;
-			$code.append($.compile-function($name, $func));
+			$func.offset = +$out;
+			$.compile-function($name, $func, $out);
 		}
 
-		$code[1] = $main-func.offset;
-		$code;
+		$out[$main-offset-fixup-idx] = $main-func.offset;
 	}
 }
 
@@ -389,8 +402,11 @@ my $cst = Lol.parsefile('test.lol');
 my $prog = Program.new();
 $prog.register-defaults();
 $prog.analyze($cst);
-my $code = $prog.compile-functions();
+my $out = Buf.new();
+$prog.compile-functions($out);
 
-my $out = open "test.blol", :w, :bin;
-$out.write($code);
-$out.close();
+say $out;
+
+my $fh = open "test.blol", :w, :bin;
+$fh.write($out);
+$fh.close();
