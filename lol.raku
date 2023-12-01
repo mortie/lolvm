@@ -55,6 +55,15 @@ grammar Lol {
 	}
 
 	rule expression {
+		| <bin-op>
+		| <expression-part>
+	}
+
+	rule bin-op {
+		<expression-part> <bin-operator> <expression>
+	}
+
+	rule expression-part {
 		| <num-literal>
 		| <group-expression>
 		| <func-call>
@@ -67,6 +76,10 @@ grammar Lol {
 
 	rule type {
 		<identifier> ('[' <type>+ %% ',' ']')?
+	}
+
+	token bin-operator {
+		'+'
 	}
 
 	token identifier {
@@ -193,9 +206,16 @@ class StackFrame {
 	}
 }
 
-class ExprResult {
-	has Buf $.code is rw;
-	has LocalVar $.var;
+sub append-i16le(Buf $buf, int16 $value) {
+	$buf.write-int16(+$buf, $value, LittleEndian);
+}
+
+sub append-u32le(Buf $buf, uint32 $value) {
+	$buf.write-uint32(+$buf, $value, LittleEndian);
+}
+
+sub append-i32le(Buf $buf, int32 $value) {
+	$buf.write-int32(+$buf, $value, LittleEndian);
 }
 
 class Program {
@@ -277,24 +297,44 @@ class Program {
 		}
 	}
 
-	method find-expression-type($frame, $expr) returns Type {
-		if $expr<num-literal>:exists {
+	method reconcile-types(Type $lhs, Type $rhs) returns Type {
+		if not ($lhs === $rhs) {
+			die "Incompatible types: {$lhs.desc}, {$rhs.desc}"
+		}
+
+		$lhs;
+	}
+
+	method find-expression-part-type($frame, $part) returns Type {
+		if $part<num-literal>:exists {
 			%builtin-types<int>;
-		} elsif $expr<group-expression>:exists {
-			$.find-expression-type($expr<group-expression><expression>);
-		} elsif $expr<func-call>:exists {
-			my $name = $expr<func-call><identifier>.Str;
+		} elsif $part<group-expression>:exists {
+			$.find-expression-type($part<group-expression><expression>);
+		} elsif $part<func-call>:exists {
+			my $name = $part<func-call><identifier>.Str;
 			if not %.funcs{$name}:exists {
 				die "Unknown function: $name"
 			}
 
 			my $func = %.funcs{$name};
 			$func.return-type;
-		} elsif $expr<identifier>:exists {
-			my $name = $expr<identifier>.Str;
+		} elsif $part<identifier>:exists {
+			my $name = $part<identifier>.Str;
 			$frame.get($name).type;
 		} else {
-			die "Bad expression";
+			die "Bad expression '$part'";
+		}
+	}
+
+	method find-expression-type($frame, $expr) returns Type {
+		if $expr<bin-op>:exists {
+			$.reconcile-types(
+				$.find-expression-part-type($frame, $expr<bin-op><expression-part>),
+				$.find-expression-type($frame, $expr<bin-op><expression>));
+		} elsif $expr<expression-part>:exists {
+			$.find-expression-part-type($frame, $expr<expression-part>);
+		} else {
+			die "Bad expression '$expr'";
 		}
 	}
 
@@ -320,32 +360,84 @@ class Program {
 		}
 	}
 
-	method compile-expr($frame, $expr, Buf $out) returns LocalVar {
-		if $expr<num-literal> {
+	method compile-expr-part($frame, $part, Buf $out) returns LocalVar {
+		if $part<num-literal> {
 			my $temp = $frame.push-temp(%builtin-types<int>);
-			$out.append(
-				LolOp::SETI_32.Int, $temp.index, 0, +$expr<num-literal>.Str, 0, 0, 0);
+			$out.append(LolOp::SETI_32);
+			append-i16le($out, $temp.index);
+			append-i32le($out, +$part<num-literal>.Str);
 			$temp;
-		} elsif $expr<identifier> {
-			$frame.get($expr<identifier>.Str);
+		} elsif $part<identifier> {
+			$frame.get($part<identifier>.Str);
+		} else {
+			die "Bad expression '$part'";
+		}
+	}
+
+	method compile-expr($frame, $expr, Buf $out) returns LocalVar {
+		if $expr<bin-op> {
+			my $lhs = $expr<bin-op><expression-part>;
+			my $rhs = $expr<bin-op><expression>;
+			my $operator = $expr<bin-op><bin-operator>.Str;
+
+			my $type = $.reconcile-types(
+				$.find-expression-part-type($frame, $lhs),
+				$.find-expression-type($frame, $rhs));
+
+			my LocalVar $temp = $frame.push-temp($type);
+			my $lhs-var = $.compile-expr-part($frame, $lhs, $out);
+			my $rhs-var = $.compile-expr($frame, $rhs, $out);
+
+			if $type === %builtin-types<int> {
+				if $operator eq "+" {
+					$out.append(LolOp::ADD_32);
+				} else {
+					die "Bad operator: '$operator'";
+				}
+			} else {
+				die "Bad type: '{$type.desc}'";
+			}
+
+			append-i16le($out, $temp.index);
+			append-i16le($out, $lhs-var.index);
+			append-i16le($out, $rhs-var.index);
+
+			$frame.pop-if-temp($rhs-var);
+			$frame.pop-if-temp($lhs-var);
+			$temp;
+		} elsif $expr<expression-part> {
+			$.compile-expr-part($frame, $expr<expression-part>, $out);
 		} else {
 			die "Bad expression '$expr'";
 		}
 	}
 
 	method compile-statm($frame, $statm, Buf $out) {
-		if $statm<block>:exists {
+		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out);
 		}elsif $statm<assign-statm> {
 			my $name = $statm<assign-statm><identifier>.Str;
 			my $dest-var = $frame.get($name);
 			my $expr = $statm<assign-statm><expression>;
 			my $src-var = $.compile-expr($frame, $expr, $out);
-			$out.append(LolOp::COPY_32, $dest-var.index, 0, $src-var.index, 0);
+			$out.append(LolOp::COPY_32);
+			append-i16le($out, $dest-var.index);
+			append-i16le($out, $src-var.index);
 			$frame.pop-if-temp($src-var);
-		} elsif $statm<dbg-print-statm>:exists {
+		} elsif $statm<dbg-print-statm> {
 			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out);
-			$out.append(LolOp::DBG_PRINT_I32, $var.index, 0);
+			if $var.type === %builtin-types<int> {
+				$out.append(LolOp::DBG_PRINT_I32);
+			} elsif $var.type === %builtin-types<long> {
+				$out.append(LolOp::DBG_PRINT_I64);
+			} else {
+				die "Type incompatible with dbg-print: '{$var.type.desc}'";
+			}
+
+			append-i16le($out, $var.index);
+			$frame.pop-if-temp($var);
+		} elsif $statm<expression> {
+			my $var = $.compile-expr($frame, $statm<expression>, $out);
 			$frame.pop-if-temp($var);
 		} else {
 			die "Bad statement '$statm'";
@@ -359,7 +451,7 @@ class Program {
 	}
 
 	method compile-function($name, $func, Buf $out) {
-		$out.append(LolOp::BEGIN_FRAME.Int);
+		$out.append(LolOp::BEGIN_FRAME);
 		my $stack-size-fixup-idx = +$out;
 		$out.append(0, 0);
 
@@ -367,8 +459,8 @@ class Program {
 		$.populate-stack-frame($frame, $func.body<statement>);
 		$.compile-block($frame, $func.body, $out);
 
-		$out[$stack-size-fixup-idx] = $frame.max-size;
-		$out.append(LolOp::RETURN.Int);
+		$out.write-int16($stack-size-fixup-idx, $frame.max-size, LittleEndian);
+		$out.append(LolOp::RETURN);
 	}
 
 	method compile-functions(Buf $out) {
@@ -383,20 +475,21 @@ class Program {
 			die "Function main must have no parameters";
 		}
 
-		$out.append(LolOp::CALL.Int);
+		$out.append(LolOp::CALL);
 		my $main-offset-fixup-idx = +$out;
-		$out.append(0, 0, 0, 0, LolOp::HALT.Int);
+		$out.append(0, 0, 0, 0, LolOp::HALT);
 
 		for %.funcs.kv -> $name, $func {
-			say "compiling function $name";
+			say "  Compiling function $name...";
 			$func.offset = +$out;
 			$.compile-function($name, $func, $out);
 		}
 
-		$out[$main-offset-fixup-idx] = $main-func.offset;
+		$out.write-uint32($main-offset-fixup-idx, $main-func.offset, LittleEndian);
 	}
 }
 
+say "Compiling: test.lol -> test.blol";
 my $cst = Lol.parsefile('test.lol');
 
 my $prog = Program.new();
@@ -405,8 +498,8 @@ $prog.analyze($cst);
 my $out = Buf.new();
 $prog.compile-functions($out);
 
-say $out;
-
 my $fh = open "test.blol", :w, :bin;
 $fh.write($out);
 $fh.close();
+
+say "Done.";

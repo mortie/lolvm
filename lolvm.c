@@ -55,7 +55,7 @@ static uint32_t parse_u32(unsigned char *ptr)
 		((uint32_t)ptr[3] << 24);
 }
 
-static uint32_t parse_u64(unsigned char *ptr)
+static uint64_t parse_u64(unsigned char *ptr)
 {
 	return 
 		((uint64_t)ptr[0] << 0) |
@@ -137,10 +137,99 @@ void evaluate(unsigned char *instrs)
 	case LOL_HALT:
 		return;
 	}
+
+	#undef OP_OFFSET
+	#undef OP_U32
+	#undef OP_I32
+	#undef OP_U64
+	#undef OP_I64
+	#undef STACK
+}
+
+void prettyprint(unsigned char *instrs, size_t size) {
+	#define OP_OFFSET(offset) parse_u16(&instrs[iptr + offset])
+
+	#define OP_U32(offset) parse_u32(&instrs[iptr + offset])
+	#define OP_I32(offset) ((uint32_t)OP_U32(offset))
+
+	#define OP_U64(offset) parse_u64(&instrs[iptr + offset])
+	#define OP_I64(offset) ((uint64_t)OP_U64(offset))
+
+	size_t iptr = 0;
+	while (iptr < size) switch ((enum lolvm_op)instrs[iptr++]) {
+	case LOL_SETI_32:
+		printf("SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
+		iptr += 6;
+		break;
+
+	case LOL_SETI_64:
+		printf("SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
+		iptr += 10;
+		break;
+
+	case LOL_COPY_32:
+		printf("COPY_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		iptr += 4;
+		break;
+
+	case LOL_COPY_64:
+		printf("COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		iptr += 4;
+		break;
+
+	case LOL_ADD_32:
+		printf("ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		iptr += 6;
+		break;
+
+	case LOL_ADD_64:
+		printf("ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		iptr += 6;
+		break;
+
+	case LOL_ADDI_32:
+		printf("ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		iptr += 8;
+		break;
+
+	case LOL_ADDI_64:
+		printf("ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
+		iptr += 12;
+		break;
+
+	case LOL_BEGIN_FRAME:
+		printf("BEGIN_FRAME %i\n", OP_OFFSET(0));
+		iptr += 2;
+		break;
+
+	case LOL_CALL:
+		printf("CALL %u\n", OP_U32(0));
+		iptr += 4;
+		break;
+
+	case LOL_RETURN:
+		printf("RETURN\n");
+		break;
+
+	case LOL_DBG_PRINT_I32:
+		printf("DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
+		iptr += 2;
+		break;
+
+	case LOL_DBG_PRINT_I64:
+		printf("DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
+		iptr += 2;
+		break;
+
+	case LOL_HALT:
+		printf("HALT\n");
+		break;
+	}
 }
 
 int main ()
 {
+	printf("=== Loading: test.blol\n");
 	unsigned char bytecode[1024];
 	bytecode[0] = LOL_HALT;
 	FILE *f = fopen("test.blol", "rb");
@@ -148,8 +237,11 @@ int main ()
 		return 1;
 	}
 
-	fread(bytecode, 1, sizeof(bytecode), f);
+	size_t n = fread(bytecode, 1, sizeof(bytecode), f);
 	fclose(f);
 
+	printf("=== Pretty print:\n");
+	prettyprint(bytecode, n);
+	printf("=== Execute:\n");
 	evaluate(bytecode);
 }
