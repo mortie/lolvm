@@ -70,6 +70,7 @@ grammar Lol {
 
 	rule expression-part {
 		| <num-literal>
+		| <bool-literal>
 		| <group-expression>
 		| <func-call>
 		| <identifier>
@@ -98,9 +99,14 @@ grammar Lol {
 	token num-literal {
 		\d+ ('.' \d+)?
 	}
+
+	token bool-literal {
+		true | false
+	}
 }
 
 enum LolOp <
+	SETI_8
 	SETI_32
 	SETI_64
 	COPY_32
@@ -113,6 +119,10 @@ enum LolOp <
 
 	CALL
 	RETURN
+	BRANCH
+	BRANCH_Z
+	BRANCH_NZ
+	DBG_PRINT_U8
 	DBG_PRINT_I32
 	DBG_PRINT_I64
 	HALT
@@ -152,6 +162,7 @@ class FuncDecl {
 
 my %builtin-types = %(
 	void => PrimitiveType.new(size => 0, desc => "void"),
+	bool => PrimitiveType.new(size => 1, desc => "bool"),
 	int => PrimitiveType.new(size => 4, desc => "int"),
 	long => PrimitiveType.new(size => 8, desc => "long"),
 );
@@ -333,6 +344,8 @@ class Program {
 	method find-expression-part-type($frame, $part) returns Type {
 		if $part<num-literal>:exists {
 			%builtin-types<int>;
+		} elsif $part<bool-literal>:exists {
+			%builtin-types<bool>;
 		} elsif $part<group-expression>:exists {
 			$.find-expression-type($part<group-expression><expression>);
 		} elsif $part<func-call>:exists {
@@ -391,6 +404,18 @@ class Program {
 			$out.append(LolOp::SETI_32);
 			append-i16le($out, $temp.index);
 			append-i32le($out, +$part<num-literal>.Str);
+			$temp;
+		} elsif $part<bool-literal> {
+			my $temp = $frame.push-temp(%builtin-types<bool>);
+			$out.append(LolOp::SETI_8);
+			append-i16le($out, $temp.index);
+			if $part<bool-literal>.Str eq "true" {
+				$out.append(1);
+			} elsif $part<bool-literal>.Str eq "false" {
+				$out.append(0);
+			} else {
+				die "Bad bool '{$part<bool-literal>}'";
+			}
 			$temp;
 		} elsif $part<group-expression> {
 			$.compile-expr($frame, $part<group-expression><expression>, $out);
@@ -451,6 +476,20 @@ class Program {
 			$out.append(LolOp::SETI_32);
 			append-i16le($out, $dest.index);
 			append-i32le($out, +$part<num-literal>.Str);
+		} elsif $part<bool-literal> {
+			if not ($dest.type === %builtin-types<bool>) {
+				die "Invalid destination type for bool";
+			}
+
+			$out.append(LolOp::SETI_8);
+			append-i16le($out, $dest.index);
+			if $part<bool-literal>.Str eq "true" {
+				$out.append(1);
+			} elsif $part<bool-literal>.Str eq "false" {
+				$out.append(0);
+			} else {
+				die "Bad bool '{$part<bool-literal>}'";
+			}
 		} else {
 			my $src = $.compile-expr-part($frame, $part, $out);
 			my $type = $.reconcile-types($dest.type, $src.type);
@@ -533,7 +572,9 @@ class Program {
 			$.compile-block($frame, $statm<block>, $out);
 		} elsif $statm<dbg-print-statm> {
 			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out);
-			if $var.type === %builtin-types<int> {
+			if $var.type === %builtin-types<bool> {
+				$out.append(LolOp::DBG_PRINT_U8);
+			} elsif $var.type === %builtin-types<int> {
 				$out.append(LolOp::DBG_PRINT_I32);
 			} elsif $var.type === %builtin-types<long> {
 				$out.append(LolOp::DBG_PRINT_I64);

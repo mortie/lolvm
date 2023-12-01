@@ -2,6 +2,11 @@
 #define X(name, n, code...)
 #endif
 
+X(SETI_8, 3, {
+	uint8_t val = OP_U8(2);
+	*STACK(OP_OFFSET(0)) = val;
+})
+
 X(SETI_32, 6, {
 	uint32_t val = OP_U32(2);
 	memcpy(STACK(OP_OFFSET(0)), &val, 4);

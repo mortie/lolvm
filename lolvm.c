@@ -5,6 +5,7 @@
 #include <inttypes.h>
 
 #define LOLVM_OPS \
+	X(SETI_8)  /* dest @, imm x32 */ \
 	X(SETI_32) /* dest @, imm x32 */ \
 	X(SETI_64) /* dest @, imm x64 */ \
 	X(COPY_32) /* dest @, src @ */ \
@@ -17,6 +18,10 @@
 	/* */ \
 	X(CALL)          /* stack-bump @, jump_target u32 */ \
 	X(RETURN)        /* */ \
+	X(BRANCH)        /* delta @ */ \
+	X(BRANCH_Z)      /* cond @, delta @ */ \
+	X(BRANCH_NZ)     /* cond @, delta @ */ \
+	X(DBG_PRINT_U8) /* val @ */ \
 	X(DBG_PRINT_I32) /* val @ */ \
 	X(DBG_PRINT_I64) /* val @ */ \
 	X(HALT)          /* */ \
@@ -75,6 +80,7 @@ struct stack_frame {
 
 size_t pretty_print_instruction(unsigned char *instr)
 {
+	#define OP_U8(offset) (instr[iptr + offset])
 	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instr[iptr + offset]))
 	#define OP_U32(offset) parse_u32(&instr[iptr + offset])
 	#define OP_I32(offset) ((int32_t)OP_U32(offset))
@@ -83,6 +89,10 @@ size_t pretty_print_instruction(unsigned char *instr)
 
 	size_t iptr = 0;
 	switch ((enum lolvm_op)instr[iptr++]) {
+	case LOL_SETI_8:
+		fprintf(stderr, "SETI_8 @%i, %u\n", OP_OFFSET(0), OP_U8(2));
+		return 3;
+
 	case LOL_SETI_32:
 		fprintf(stderr, "SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
 		return 6;
@@ -127,6 +137,22 @@ size_t pretty_print_instruction(unsigned char *instr)
 		fprintf(stderr, "RETURN\n");
 		return 0;
 
+	case LOL_BRANCH:
+		fprintf(stderr, "BRANCH @%i\n", OP_OFFSET(0));
+		return 2;
+
+	case LOL_BRANCH_Z:
+		fprintf(stderr, "BRANCH_Z @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(0));
+		return 4;
+
+	case LOL_BRANCH_NZ:
+		fprintf(stderr, "BRANCH_NZ @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(0));
+		return 4;
+
+	case LOL_DBG_PRINT_U8:
+		fprintf(stderr, "DBG_PRINT_U8 @%i\n", OP_OFFSET(0));
+		return 2;
+
 	case LOL_DBG_PRINT_I32:
 		fprintf(stderr, "DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
 		return 2;
@@ -140,6 +166,7 @@ size_t pretty_print_instruction(unsigned char *instr)
 		return 0;
 	}
 
+	#undef OP_U8
 	#undef OP_OFFSET
 	#undef OP_U32
 	#undef OP_I32
@@ -157,6 +184,7 @@ void evaluate(unsigned char *instrs)
 	size_t iptr = 0;
 	size_t cptr = 0;
 
+	#define OP_U8(offset) (instrs[iptr + offset])
 	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instrs[iptr + offset]))
 	#define OP_U32(offset) parse_u32(&instrs[iptr + offset])
 	#define OP_I32(offset) ((int32_t)OP_U32(offset))
@@ -183,6 +211,29 @@ void evaluate(unsigned char *instrs)
 		iptr = callstack[cptr].iptr;
 		break;
 
+	case LOL_BRANCH:
+		iptr += OP_OFFSET(0);
+		break;
+
+	case LOL_BRANCH_Z:
+		if (*STACK(OP_OFFSET(0)) == 0) {
+			iptr += OP_OFFSET(2);
+		}
+		break;
+
+	case LOL_BRANCH_NZ:
+		if (*STACK(OP_OFFSET(0)) != 0) {
+			iptr += OP_OFFSET(2);
+		}
+		break;
+
+	case LOL_DBG_PRINT_U8: {
+		uint8_t val = *STACK(OP_OFFSET(0));
+		printf("DBG PRINT @%" PRIi16 ": %" PRIu8 "\n", OP_OFFSET(0), val);
+		iptr += 2;
+		break;
+	}
+
 	case LOL_DBG_PRINT_I32: {
 		int32_t val;
 		memcpy(&val, STACK(OP_OFFSET(0)), 4);
@@ -203,6 +254,7 @@ void evaluate(unsigned char *instrs)
 		return;
 	}
 
+	#undef OP_U8
 	#undef OP_OFFSET
 	#undef OP_U32
 	#undef OP_I32
@@ -218,7 +270,7 @@ void pretty_print(unsigned char *instrs, size_t size) {
 	}
 }
 
-int main ()
+int main()
 {
 	printf("=== Loading: test.blol\n");
 	unsigned char bytecode[1024];
