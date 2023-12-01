@@ -111,7 +111,6 @@ enum LolOp <
 	ADDI_32
 	ADDI_64
 
-	BEGIN_FRAME
 	CALL
 	RETURN
 	DBG_PRINT_I32
@@ -427,6 +426,7 @@ class Program {
 			}
 
 			$out.append(LolOp::CALL);
+			append-i16le($out, $frame.idx);
 			append-u32le($out, $func.offset);
 
 			while @param-vars {
@@ -566,10 +566,6 @@ class Program {
 	}
 
 	method compile-function($func, Buf $out) {
-		$out.append(LolOp::BEGIN_FRAME);
-		my $stack-size-fixup-idx = +$out;
-		$out.append(0, 0);
-
 		my $frame = StackFrame.new(func => $func);
 
 		my $params-index = 0;
@@ -589,7 +585,6 @@ class Program {
 		$.populate-stack-frame($frame, $func.body<statement>);
 		$.compile-block($frame, $func.body, $out);
 
-		$out.write-int16($stack-size-fixup-idx, $frame.max-size, LittleEndian);
 		$out.append(LolOp::RETURN);
 	}
 
@@ -605,7 +600,7 @@ class Program {
 			die "Function main must have no parameters";
 		}
 
-		$out.append(LolOp::CALL);
+		$out.append(LolOp::CALL, 0, 0);
 		my $main-offset-fixup-idx = +$out;
 		$out.append(0, 0, 0, 0, LolOp::HALT);
 

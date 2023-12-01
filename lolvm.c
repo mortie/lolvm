@@ -15,8 +15,7 @@
 	X(ADDI_32) /* dest @, a @, imm b x32 */ \
 	X(ADDI_64) /* dest @, a @, imm b x64 */ \
 	/* */ \
-	X(BEGIN_FRAME)   /* stack_space_bytes @ */ \
-	X(CALL)          /* jump_target u32 */ \
+	X(CALL)          /* stack-bump @, jump_target u32 */ \
 	X(RETURN)        /* */ \
 	X(DBG_PRINT_I32) /* val @ */ \
 	X(DBG_PRINT_I64) /* val @ */ \
@@ -70,52 +69,116 @@ static uint64_t parse_u64(unsigned char *ptr)
 }
 
 struct stack_frame {
-	size_t bptr;
 	size_t sptr;
 	size_t iptr;
 };
+
+size_t pretty_print_instruction(unsigned char *instr)
+{
+	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instr[iptr + offset]))
+	#define OP_U32(offset) parse_u32(&instr[iptr + offset])
+	#define OP_I32(offset) ((int32_t)OP_U32(offset))
+	#define OP_U64(offset) parse_u64(&instr[iptr + offset])
+	#define OP_I64(offset) ((int64_t)OP_U64(offset))
+
+	size_t iptr = 0;
+	switch ((enum lolvm_op)instr[iptr++]) {
+	case LOL_SETI_32:
+		fprintf(stderr, "SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
+		return 6;
+
+	case LOL_SETI_64:
+		fprintf(stderr, "SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
+		return 10;
+
+	case LOL_COPY_32:
+		fprintf(stderr, "COPY_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
+
+	case LOL_COPY_64:
+		fprintf(stderr, "COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
+
+	case LOL_COPY_N:
+		fprintf(stderr, "COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		return 8;
+
+	case LOL_ADD_32:
+		fprintf(stderr, "ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+
+	case LOL_ADD_64:
+		fprintf(stderr, "ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+
+	case LOL_ADDI_32:
+		fprintf(stderr, "ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		return 8;
+
+	case LOL_ADDI_64:
+		fprintf(stderr, "ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
+		return 12;
+
+	case LOL_CALL:
+		fprintf(stderr, "CALL @%i, %u\n", OP_OFFSET(0), OP_U32(2));
+		return 6;
+
+	case LOL_RETURN:
+		fprintf(stderr, "RETURN\n");
+		return 0;
+
+	case LOL_DBG_PRINT_I32:
+		fprintf(stderr, "DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
+		return 2;
+
+	case LOL_DBG_PRINT_I64:
+		fprintf(stderr, "DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
+		return 2;
+
+	case LOL_HALT:
+		fprintf(stderr, "HALT\n");
+		return 0;
+	}
+
+	#undef OP_OFFSET
+	#undef OP_U32
+	#undef OP_I32
+	#undef OP_U64
+	#undef OP_I64
+
+	return 0;
+}
 
 void evaluate(unsigned char *instrs)
 {
 	unsigned char stack[1024];
 	struct stack_frame callstack[64];
 	size_t sptr = 0;
-	size_t bptr = 0;
 	size_t iptr = 0;
 	size_t cptr = 0;
 
 	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instrs[iptr + offset]))
-
 	#define OP_U32(offset) parse_u32(&instrs[iptr + offset])
 	#define OP_I32(offset) ((int32_t)OP_U32(offset))
-
 	#define OP_U64(offset) parse_u64(&instrs[iptr + offset])
 	#define OP_I64(offset) ((int64_t)OP_U64(offset))
-
-	#define STACK(offset) (&stack[bptr + (offset)])
+	#define STACK(offset) (&stack[sptr + (offset)])
 
 	while (1) switch ((enum lolvm_op)instrs[iptr++]) {
 #define X(name, n, code...) case LOL_ ## name: code iptr += n; break;
 #include "instructions.x.h"
 #undef X
 
-	case LOL_BEGIN_FRAME:
-		sptr += OP_OFFSET(0);
-		iptr += 2;
-		break;
-
 	case LOL_CALL:
-		callstack[cptr].bptr = bptr;
 		callstack[cptr].sptr = sptr;
-		callstack[cptr].iptr = iptr + 4;
+		callstack[cptr].iptr = iptr + 6;
 		cptr += 1;
-		bptr = sptr;
-		iptr = OP_U32(0);
+		sptr += OP_OFFSET(0);
+		iptr = OP_U32(2);
 		break;
 
 	case LOL_RETURN:
 		cptr -= 1;
-		bptr = callstack[cptr].bptr;
 		sptr = callstack[cptr].sptr;
 		iptr = callstack[cptr].iptr;
 		break;
@@ -148,89 +211,10 @@ void evaluate(unsigned char *instrs)
 	#undef STACK
 }
 
-void prettyprint(unsigned char *instrs, size_t size) {
-	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instrs[iptr + offset]))
-
-	#define OP_U32(offset) parse_u32(&instrs[iptr + offset])
-	#define OP_I32(offset) ((int32_t)OP_U32(offset))
-
-	#define OP_U64(offset) parse_u64(&instrs[iptr + offset])
-	#define OP_I64(offset) ((int64_t)OP_U64(offset))
-
+void pretty_print(unsigned char *instrs, size_t size) {
 	size_t iptr = 0;
-	while (iptr < size) switch ((enum lolvm_op)instrs[iptr++]) {
-	case LOL_SETI_32:
-		printf("SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
-		iptr += 6;
-		break;
-
-	case LOL_SETI_64:
-		printf("SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
-		iptr += 10;
-		break;
-
-	case LOL_COPY_32:
-		printf("COPY_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
-		iptr += 4;
-		break;
-
-	case LOL_COPY_64:
-		printf("COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
-		iptr += 4;
-		break;
-
-	case LOL_COPY_N:
-		printf("COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
-		iptr += 8;
-		break;
-
-	case LOL_ADD_32:
-		printf("ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
-		iptr += 6;
-		break;
-
-	case LOL_ADD_64:
-		printf("ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
-		iptr += 6;
-		break;
-
-	case LOL_ADDI_32:
-		printf("ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
-		iptr += 8;
-		break;
-
-	case LOL_ADDI_64:
-		printf("ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
-		iptr += 12;
-		break;
-
-	case LOL_BEGIN_FRAME:
-		printf("BEGIN_FRAME %i\n", OP_OFFSET(0));
-		iptr += 2;
-		break;
-
-	case LOL_CALL:
-		printf("CALL %u\n", OP_U32(0));
-		iptr += 4;
-		break;
-
-	case LOL_RETURN:
-		printf("RETURN\n");
-		break;
-
-	case LOL_DBG_PRINT_I32:
-		printf("DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
-		iptr += 2;
-		break;
-
-	case LOL_DBG_PRINT_I64:
-		printf("DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
-		iptr += 2;
-		break;
-
-	case LOL_HALT:
-		printf("HALT\n");
-		break;
+	while (iptr < size)  {
+		iptr += pretty_print_instruction(&instrs[iptr]) + 1;
 	}
 }
 
@@ -248,7 +232,7 @@ int main ()
 	fclose(f);
 
 	printf("=== Pretty print:\n");
-	prettyprint(bytecode, n);
+	pretty_print(bytecode, n);
 	printf("=== Execute:\n");
 	evaluate(bytecode);
 }
