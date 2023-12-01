@@ -266,6 +266,7 @@ void evaluate(unsigned char *instrs)
 void pretty_print(unsigned char *instrs, size_t size) {
 	size_t iptr = 0;
 	while (iptr < size)  {
+		fprintf(stderr, "%04zu ", iptr);
 		iptr += pretty_print_instruction(&instrs[iptr]) + 1;
 	}
 }

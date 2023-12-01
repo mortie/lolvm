@@ -584,6 +584,29 @@ class Program {
 
 			append-i16le($out, $var.index);
 			$frame.pop-if-temp($var);
+		} elsif $statm<if-statm> {
+			my $cond-var = $.compile-expr($frame, $statm<if-statm><expression>, $out);
+			my $if-start-idx = +$out;
+			$out.append(LolOp::BRANCH_Z);
+			my $fixup-skip-if-body-idx= +$out;
+			$out.append(0, 0);
+			$frame.pop-if-temp($cond-var);
+
+			$.compile-statm($frame, $statm<if-statm><statement>, $out);
+
+			if $statm<if-statm>[0] {
+				my $else-start-idx = +$out;
+				$out.append(LolOp::BRANCH);
+				my $fixup-skip-else-body-idx = +$out;
+				$out.append(0, 0);
+
+				$out.write-int16($fixup-skip-if-body-idx, +$out - $if-start-idx, LittleEndian);
+
+				$.compile-statm($frame, $statm<if-statm>[0]<statement>, $out);
+				$out.write-int16($fixup-skip-else-body-idx, +$out - $else-start-idx, LittleEndian);
+			} else {
+				$out.write-int16($fixup-skip-if-body-idx, +$out - $if-start-idx, LittleEndian);
+			}
 		} elsif $statm<return-statm> {
 			$.compile-expr-to-loc(
 				$frame, $frame.func.return-var, $statm<return-statm><expression>, $out);
