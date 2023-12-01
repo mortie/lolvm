@@ -132,11 +132,15 @@ void evaluate(unsigned char *instrs)
 
 int main ()
 {
-	unsigned char bytecode[] = {
-		LOL_BEGIN_FRAME, 4, 0,
-		LOL_SETI_32, 4, 0, 50, 0, 0, 0,
-		LOL_DBG_PRINT_I32, 4, 0,
-		LOL_HALT,
-	};
+	unsigned char bytecode[1024];
+	bytecode[0] = LOL_HALT;
+	FILE *f = fopen("test.blol", "rb");
+	if (!f) {
+		return 1;
+	}
+
+	fread(bytecode, 1, sizeof(bytecode), f);
+	fclose(f);
+
 	evaluate(bytecode);
 }

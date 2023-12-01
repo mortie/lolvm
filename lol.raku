@@ -1,3 +1,5 @@
+#!/usr/bin/env raku
+
 grammar Lol {
 	rule TOP {
 		^ <toplevel>* $
@@ -35,8 +37,21 @@ grammar Lol {
 	rule statement {
 		| <block>
 		| <if-statm>
+		| <dbg-print-statm>
 		| <assign-statm>
 		| <expression>
+	}
+
+	rule if-statm {
+		'if' <expression> <statement> ('else' <statement>)?
+	}
+
+	rule dbg-print-statm {
+		'dbg-print' <expression>
+	}
+
+	rule assign-statm {
+		<identifier> '=' <expression>
 	}
 
 	rule expression {
@@ -48,14 +63,6 @@ grammar Lol {
 
 	rule group-expression {
 		'(' <expression> ')'
-	}
-
-	rule if-statm {
-		'if' <expression> <statement> ('else' <statement>)?
-	}
-
-	rule assign-statm {
-		<identifier> '=' <expression>
 	}
 
 	rule type {
@@ -75,6 +82,22 @@ grammar Lol {
 	}
 }
 
+enum LolOp <
+	SETI_32
+	SETI_64
+	ADD_32
+	ADD_64
+	ADDI_32
+	ADDI_64
+	BEGIN_FRAME
+	END_FRAME
+	CALL
+	RETURN
+	DBG_PRINT_I32
+	DBG_PRINT_I64
+	HALT
+>;
+
 class Type {
 	has Int $.size;
 	has Str $.desc;
@@ -91,9 +114,12 @@ class FuncDecl {
 	has $.return-type;
 	has @.params;
 	has $.body;
+
+	has Int $.offset is rw;
 }
 
-my %primitive-types = %(
+my %builtin-types = %(
+	void => PrimitiveType.new(size => 0, desc => "void"),
 	int => PrimitiveType.new(size => 4, desc => "int"),
 	long => PrimitiveType.new(size => 8, desc => "long"),
 );
@@ -101,13 +127,14 @@ my %primitive-types = %(
 class LocalVar {
 	has Int $.index;
 	has Type $.type;
+	has Bool $.temp;
 }
 
 class StackFrame {
-	has LocalVar %.vars;
-	has LocalVar @.temps;
-	has Int $.idx is rw;
-	has Int $.max-idx is rw;
+	has LocalVar %.vars is rw;
+	has LocalVar @.temps is rw;
+	has Int $.idx is rw = 0;
+	has Int $.max-idx is rw = 0;
 
 	method has(Str $name) {
 		%.vars{$name}:exists;
@@ -129,6 +156,7 @@ class StackFrame {
 		my $var = LocalVar.new(
 			index => $.idx,
 			type => $type,
+			temp => False,
 		);
 		%.vars{$name} = $var;
 		$.idx += $type.size;
@@ -140,6 +168,7 @@ class StackFrame {
 		my $var = LocalVar.new(
 			index => $.idx,
 			type => $type,
+			temp => True,
 		);
 		$.idx += $type.size;
 		if $.idx > $.max-idx {
@@ -149,23 +178,35 @@ class StackFrame {
 		$var;
 	}
 
-	method pop-temp() {
-		my $var = @.vars.pop();
-		$.idx -= $var.type.size;
+	method pop-if-temp($var) {
+		if $var.temp {
+			my $popped-var = @.temps.pop();
+			if not ($var === $popped-var) {
+				die "Popped non-top-of-stack variable at index {$var.index} " ~
+					"(top has index {$popped-var.index}";
+			}
+
+			$.idx -= $var.type.size;
+		}
 	}
 }
 
+class ExprResult {
+	has Buf $.code is rw;
+	has LocalVar $.var;
+}
+
 class Program {
-	has %.types;
-	has %.funcs;
+	has Type %.types;
+	has FuncDecl %.funcs;
 
 	method register-defaults() {
-		for %primitive-types.kv -> $k, $v {
+		for %builtin-types.kv -> $k, $v {
 			%.types{$k} = $v;
 		}
 	}
 
-	method lookup-type-from-cst($type-cst) {
+	method lookup-type-from-cst($type-cst) returns Type {
 		my $name = $type-cst<identifier>.Str;
 		if not %.types{$name}:exists {
 			die "Unknown type: $name";
@@ -234,9 +275,9 @@ class Program {
 		}
 	}
 
-	method find-expression-type($frame, $expr) {
+	method find-expression-type($frame, $expr) returns Type {
 		if $expr<num-literal>:exists {
-			%primitive-types<int>;
+			%builtin-types<int>;
 		} elsif $expr<group-expression>:exists {
 			$.find-expression-type($expr<group-expression><expression>);
 		} elsif $expr<func-call>:exists {
@@ -277,20 +318,69 @@ class Program {
 		}
 	}
 
-	method compile-function($name, $func) {
-		my $frame = StackFrame.new();
-		$.populate-stack-frame($frame, $func.body<statement>);
-
-		say "$name:";
-		for $func.body<statement> -> $statm {
+	method compile-expr($frame, $expr) returns ExprResult {
+		if $expr<num-literal> {
+			my $temp = $frame.push-temp(%builtin-types<int>);
+			my $code = Buf.new(
+				LolOp::SETI_32.Int, $temp.index, 0, +$expr<num-literal>.Str, 0, 0, 0);
+			ExprResult.new(code => $code, var => $temp);
+		} else {
+			die "Bad expr";
 		}
 	}
 
-	method compile-functions() {
+	method compile-statm($frame, $statm) returns Buf {
+		if $statm<block>:exists {
+			$.compile-block($frame, $statm<block>);
+		} elsif $statm<dbg-print-statm>:exists {
+			my $res = $.compile-expr($frame, $statm<dbg-print-statm><expression>);
+			$res.code.append(LolOp::DBG_PRINT_I32, $res.var.index, 0);
+			$frame.pop-if-temp($res.var);
+			$res.code;
+		} else {
+			die "Bad statm";
+		}
+	}
+
+	method compile-block($frame, $block) returns Buf {
+		my $code = Buf.new();
+		for $block<statement> -> $statm {
+			$code.append($.compile-statm($frame, $statm));
+		}
+		$code;
+	}
+
+	method compile-function($name, $func) returns Buf {
+		my $frame = StackFrame.new();
+		$.populate-stack-frame($frame, $func.body<statement>);
+		my $code = $.compile-block($frame, $func.body);
+		$code.prepend(LolOp::BEGIN_FRAME.Int, $frame.max-idx, 0);
+		$code.append(LolOp::RETURN.Int);
+		$code;
+	}
+
+	method compile-functions() returns Buf {
+		my $code = Buf.new(LolOp::CALL.Int, 0, 0, 0, 0, LolOp::HALT.Int);
+
+		if not %.funcs<main>:exists {
+			die "Missing main function";
+		}
+
+		my $main-func = %.funcs<main>;
+		if not ($main-func.return-type === %builtin-types<void>) {
+			die "Function main must have return type void";
+		} elsif +$main-func.params != 0 {
+			die "Function main must have no parameters";
+		}
+
 		for %.funcs.kv -> $name, $func {
 			say "compiling function $name";
-			$.compile-function($name, $func);
+			$func.offset = +$code;
+			$code.append($.compile-function($name, $func));
 		}
+
+		$code[1] = $main-func.offset;
+		$code;
 	}
 }
 
@@ -299,4 +389,8 @@ my $cst = Lol.parsefile('test.lol');
 my $prog = Program.new();
 $prog.register-defaults();
 $prog.analyze($cst);
-$prog.compile-functions();
+my $code = $prog.compile-functions();
+
+my $out = open "test.blol", :w, :bin;
+$out.write($code);
+$out.close();
