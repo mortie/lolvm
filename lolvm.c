@@ -9,6 +9,7 @@
 	X(SETI_64) /* dest @, imm x64 */ \
 	X(COPY_32) /* dest @, src @ */ \
 	X(COPY_64) /* dest @, src @ */ \
+	X(COPY_N)  /* dest @, src @, size u32 */ \
 	X(ADD_32)  /* dest @, a @, b @ */ \
 	X(ADD_64)  /* dest @, a @, b @ */ \
 	X(ADDI_32) /* dest @, a @, imm b x32 */ \
@@ -83,15 +84,15 @@ void evaluate(unsigned char *instrs)
 	size_t iptr = 0;
 	size_t cptr = 0;
 
-	#define OP_OFFSET(offset) parse_u16(&instrs[iptr + offset])
+	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instrs[iptr + offset]))
 
 	#define OP_U32(offset) parse_u32(&instrs[iptr + offset])
-	#define OP_I32(offset) ((uint32_t)OP_U32(offset))
+	#define OP_I32(offset) ((int32_t)OP_U32(offset))
 
 	#define OP_U64(offset) parse_u64(&instrs[iptr + offset])
-	#define OP_I64(offset) ((uint64_t)OP_U64(offset))
+	#define OP_I64(offset) ((int64_t)OP_U64(offset))
 
-	#define STACK(offset) (&stack[bptr - (offset)])
+	#define STACK(offset) (&stack[bptr + (offset)])
 
 	while (1) switch ((enum lolvm_op)instrs[iptr++]) {
 #define X(name, n, code...) case LOL_ ## name: code iptr += n; break;
@@ -108,6 +109,7 @@ void evaluate(unsigned char *instrs)
 		callstack[cptr].sptr = sptr;
 		callstack[cptr].iptr = iptr + 4;
 		cptr += 1;
+		bptr = sptr;
 		iptr = OP_U32(0);
 		break;
 
@@ -147,13 +149,13 @@ void evaluate(unsigned char *instrs)
 }
 
 void prettyprint(unsigned char *instrs, size_t size) {
-	#define OP_OFFSET(offset) parse_u16(&instrs[iptr + offset])
+	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instrs[iptr + offset]))
 
 	#define OP_U32(offset) parse_u32(&instrs[iptr + offset])
-	#define OP_I32(offset) ((uint32_t)OP_U32(offset))
+	#define OP_I32(offset) ((int32_t)OP_U32(offset))
 
 	#define OP_U64(offset) parse_u64(&instrs[iptr + offset])
-	#define OP_I64(offset) ((uint64_t)OP_U64(offset))
+	#define OP_I64(offset) ((int64_t)OP_U64(offset))
 
 	size_t iptr = 0;
 	while (iptr < size) switch ((enum lolvm_op)instrs[iptr++]) {
@@ -175,6 +177,11 @@ void prettyprint(unsigned char *instrs, size_t size) {
 	case LOL_COPY_64:
 		printf("COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		iptr += 4;
+		break;
+
+	case LOL_COPY_N:
+		printf("COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		iptr += 8;
 		break;
 
 	case LOL_ADD_32:

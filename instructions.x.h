@@ -20,6 +20,10 @@ X(COPY_64, 4, {
 	memcpy(STACK(OP_OFFSET(0)), STACK(OP_OFFSET(2)), 8);
 })
 
+X(COPY_N, 8, {
+	memcpy(STACK(OP_OFFSET(0)), STACK(OP_OFFSET(2)), OP_U32(4));
+})
+
 X(ADD_32, 6, {
 	uint32_t a;
 	memcpy(&a, STACK(OP_OFFSET(2)), 4);
