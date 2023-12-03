@@ -62,3 +62,23 @@ X(ADDI_64, 12, {
 	a += b;
 	memcpy(STACK(OP_OFFSET(0)), &a, 8);
 })
+
+X(EQ_8, 6, {
+	*STACK(OP_OFFSET(0)) = *STACK(OP_OFFSET(2)) == *STACK(OP_OFFSET(4));
+});
+
+X(EQ_32, 6, {
+	uint32_t a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 4);
+	uint32_t b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 4);
+	*STACK(OP_OFFSET(0)) = a == b;
+});
+
+X(EQ_64, 6, {
+	uint64_t a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 4);
+	uint64_t b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 4);
+	*STACK(OP_OFFSET(0)) = a == b;
+});

@@ -15,6 +15,9 @@
 	X(ADD_64)  /* dest @, a @, b @ */ \
 	X(ADDI_32) /* dest @, a @, imm b x32 */ \
 	X(ADDI_64) /* dest @, a @, imm b x64 */ \
+	X(EQ_8)    /* dest @, a @, b @ */ \
+	X(EQ_32)   /* dest @, a @, b @ */ \
+	X(EQ_64)   /* dest @, a @, b @ */ \
 	/* */ \
 	X(CALL)          /* stack-bump @, jump_target u32 */ \
 	X(RETURN)        /* */ \
@@ -123,6 +126,18 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_ADDI_64:
 		fprintf(stderr, "ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
 		return 12;
+
+	case LOL_EQ_8:
+		fprintf(stderr, "EQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+
+	case LOL_EQ_32:
+		fprintf(stderr, "EQ_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+
+	case LOL_EQ_64:
+		fprintf(stderr, "EQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
 
 	case LOL_CALL:
 		fprintf(stderr, "CALL @%i, %u\n", OP_OFFSET(0), OP_U32(2));

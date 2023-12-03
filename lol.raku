@@ -68,6 +68,10 @@ grammar Lol {
 		<expression-part> <bin-operator> <expression>
 	}
 
+	token bin-operator {
+		'+' | '=='
+	}
+
 	rule expression-part {
 		| <num-literal>
 		| <bool-literal>
@@ -86,10 +90,6 @@ grammar Lol {
 
 	rule type {
 		<identifier> ('[' <type>+ %% ',' ']')?
-	}
-
-	token bin-operator {
-		'+'
 	}
 
 	token identifier {
@@ -116,6 +116,9 @@ enum LolOp <
 	ADD_64
 	ADDI_32
 	ADDI_64
+	EQ_8
+	EQ_32
+	EQ_64
 
 	CALL
 	RETURN
@@ -541,9 +544,35 @@ class Program {
 			my $lhs-var = $.compile-expr-part($frame, $lhs, $out);
 			my $rhs-var = $.compile-expr($frame, $rhs, $out);
 
-			if $dest.type === %builtin-types<int> {
+			my $src-type = $.reconcile-types($lhs-var.type, $rhs-var.type);
+
+			if $dest.type === %builtin-types<bool> and $src-type === %builtin-types<bool> {
+				if $operator eq "==" {
+					$out.append(LolOp::EQ_8);
+				} else {
+					die "Bad operator: '$operator'";
+				}
+			} elsif $dest.type === %builtin-types<bool> and $src-type === %builtin-types<int> {
+				if $operator eq "==" {
+					$out.append(LolOp::EQ_32);
+				} else {
+					die "Bad operator: '$operator'";
+				}
+			} elsif $dest.type === %builtin-types<bool> and $src-type === %builtin-types<long> {
+				if $operator eq "==" {
+					$out.append(LolOp::EQ_64);
+				} else {
+					die "Bad operator: '$operator'";
+				}
+			} elsif $dest.type === %builtin-types<int> and $src-type === %builtin-types<int> {
 				if $operator eq "+" {
 					$out.append(LolOp::ADD_32);
+				} else {
+					die "Bad operator: '$operator'";
+				}
+			} elsif $dest.type === %builtin-types<long> and $src-type === %builtin-types<long> {
+				if $operator eq "+" {
+					$out.append(LolOp::ADD_64);
 				} else {
 					die "Bad operator: '$operator'";
 				}
