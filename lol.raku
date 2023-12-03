@@ -69,7 +69,7 @@ grammar Lol {
 	}
 
 	token bin-operator {
-		'+' | '=='
+		'+' | '==' | "!=" | "<" | "<=" | ">" | ">="
 	}
 
 	rule expression-part {
@@ -119,6 +119,15 @@ enum LolOp <
 	EQ_8
 	EQ_32
 	EQ_64
+	NEQ_8
+	NEQ_32
+	NEQ_64
+	LT_U8
+	LT_I32
+	LT_I64
+	LE_U8
+	LE_I32
+	LE_I64
 
 	CALL
 	RETURN
@@ -376,9 +385,15 @@ class Program {
 
 	method find-expression-type($frame, $expr) returns Type {
 		if $expr<bin-op>:exists {
-			$.reconcile-types(
-				$.find-expression-part-type($frame, $expr<bin-op><expression-part>),
-				$.find-expression-type($frame, $expr<bin-op><expression>));
+			my $operator = $expr<bin-op><bin-operator>.Str;
+			say "hy opearotr $operator";
+			if ("==", "!=", "<", "<=", ">", ">=").contains($operator) {
+				%builtin-types<bool>;
+			} else {
+				$.reconcile-types(
+					$.find-expression-part-type($frame, $expr<bin-op><expression-part>),
+					$.find-expression-type($frame, $expr<bin-op><expression>));
+			}
 		} elsif $expr<expression-part>:exists {
 			$.find-expression-part-type($frame, $expr<expression-part>);
 		} else {
@@ -520,11 +535,17 @@ class Program {
 
 	method compile-expr($frame, $expr, Buf $out) returns LocalVar {
 		if $expr<bin-op> {
+			my $operator = $expr<bin-op><bin-operator>.Str;
 			my $lhs = $expr<bin-op><expression-part>;
 			my $rhs = $expr<bin-op><expression>;
-			my $type = $.reconcile-types(
-				$.find-expression-part-type($frame, $lhs),
-				$.find-expression-type($frame, $rhs));
+			my $type;
+			if ("==", "!=", "<", "<=", ">", ">=").contains($operator) {
+				$type = %builtin-types<bool>;
+			} else {
+				$type = $.reconcile-types(
+					$.find-expression-part-type($frame, $lhs),
+					$.find-expression-type($frame, $rhs));
+			}
 			my $temp = $frame.push-temp($type);
 			$.compile-expr-to-loc($frame, $temp, $expr, $out);
 			$temp;
@@ -545,22 +566,49 @@ class Program {
 			my $rhs-var = $.compile-expr($frame, $rhs, $out);
 
 			my $src-type = $.reconcile-types($lhs-var.type, $rhs-var.type);
+			my $swap-opers = False;
 
 			if $dest.type === %builtin-types<bool> and $src-type === %builtin-types<bool> {
 				if $operator eq "==" {
 					$out.append(LolOp::EQ_8);
+				} elsif $operator eq "!=" {
+					$out.append(LolOp::NEQ_8);
 				} else {
 					die "Bad operator: '$operator'";
 				}
 			} elsif $dest.type === %builtin-types<bool> and $src-type === %builtin-types<int> {
 				if $operator eq "==" {
 					$out.append(LolOp::EQ_32);
+				} elsif $operator eq "!=" {
+					$out.append(LolOp::NEQ_32);
+				} elsif $operator eq "<" {
+					$out.append(LolOp::LT_I32);
+				} elsif $operator eq "<=" {
+					$out.append(LolOp::LE_I32);
+				} elsif $operator eq ">" {
+					$out.append(LolOp::LT_I32);
+					$swap-opers = True;
+				} elsif $operator eq ">=" {
+					$out.append(LolOp::LE_I32);
+					$swap-opers = True;
 				} else {
 					die "Bad operator: '$operator'";
 				}
 			} elsif $dest.type === %builtin-types<bool> and $src-type === %builtin-types<long> {
 				if $operator eq "==" {
 					$out.append(LolOp::EQ_64);
+				} elsif $operator eq "!=" {
+					$out.append(LolOp::NEQ_64);
+				} elsif $operator eq "<" {
+					$out.append(LolOp::LT_I64);
+				} elsif $operator eq "<=" {
+					$out.append(LolOp::LE_I64);
+				} elsif $operator eq ">" {
+					$out.append(LolOp::LT_I64);
+					$swap-opers = True;
+				} elsif $operator eq ">=" {
+					$out.append(LolOp::LE_I64);
+					$swap-opers = True;
 				} else {
 					die "Bad operator: '$operator'";
 				}
@@ -581,8 +629,13 @@ class Program {
 			}
 
 			append-i16le($out, $dest.index);
-			append-i16le($out, $lhs-var.index);
-			append-i16le($out, $rhs-var.index);
+			if $swap-opers {
+				append-i16le($out, $rhs-var.index);
+				append-i16le($out, $lhs-var.index);
+			} else {
+				append-i16le($out, $lhs-var.index);
+				append-i16le($out, $rhs-var.index);
+			}
 
 			$frame.pop-if-temp($rhs-var);
 			$frame.pop-if-temp($lhs-var);

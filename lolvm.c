@@ -18,6 +18,15 @@
 	X(EQ_8)    /* dest @, a @, b @ */ \
 	X(EQ_32)   /* dest @, a @, b @ */ \
 	X(EQ_64)   /* dest @, a @, b @ */ \
+	X(NEQ_8)    /* dest @, a @, b @ */ \
+	X(NEQ_32)   /* dest @, a @, b @ */ \
+	X(NEQ_64)   /* dest @, a @, b @ */ \
+	X(LT_U8)    /* dest @, a @, b @ */ \
+	X(LT_I32)   /* dest @, a @, b @ */ \
+	X(LT_I64)   /* dest @, a @, b @ */ \
+	X(LE_U8)    /* dest @, a @, b @ */ \
+	X(LE_I32)   /* dest @, a @, b @ */ \
+	X(LE_I64)   /* dest @, a @, b @ */ \
 	/* */ \
 	X(CALL)          /* stack-bump @, jump_target u32 */ \
 	X(RETURN)        /* */ \
@@ -90,11 +99,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_SETI_8:
 		fprintf(stderr, "SETI_8 @%i, %u\n", OP_OFFSET(0), OP_U8(2));
 		return 3;
-
 	case LOL_SETI_32:
 		fprintf(stderr, "SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
 		return 6;
-
 	case LOL_SETI_64:
 		fprintf(stderr, "SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
 		return 10;
@@ -102,11 +109,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_COPY_32:
 		fprintf(stderr, "COPY_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
-
 	case LOL_COPY_64:
 		fprintf(stderr, "COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
-
 	case LOL_COPY_N:
 		fprintf(stderr, "COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
@@ -114,7 +119,6 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_ADD_32:
 		fprintf(stderr, "ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
-
 	case LOL_ADD_64:
 		fprintf(stderr, "ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
@@ -122,7 +126,6 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_ADDI_32:
 		fprintf(stderr, "ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
-
 	case LOL_ADDI_64:
 		fprintf(stderr, "ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
 		return 12;
@@ -130,19 +133,46 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_EQ_8:
 		fprintf(stderr, "EQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
-
 	case LOL_EQ_32:
 		fprintf(stderr, "EQ_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
-
 	case LOL_EQ_64:
 		fprintf(stderr, "EQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+
+	case LOL_NEQ_8:
+		fprintf(stderr, "NEQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_NEQ_32:
+		fprintf(stderr, "NEQ_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_NEQ_64:
+		fprintf(stderr, "NEQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+
+	case LOL_LT_U8:
+		fprintf(stderr, "LT_U8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_LT_I32:
+		fprintf(stderr, "LT_I32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_LT_I64:
+		fprintf(stderr, "LT_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+
+	case LOL_LE_U8:
+		fprintf(stderr, "LE_U8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_LE_I32:
+		fprintf(stderr, "LE_I32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_LE_I64:
+		fprintf(stderr, "LE_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_CALL:
 		fprintf(stderr, "CALL @%i, %u\n", OP_OFFSET(0), OP_U32(2));
 		return 6;
-
 	case LOL_RETURN:
 		fprintf(stderr, "RETURN\n");
 		return 0;
@@ -150,11 +180,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_BRANCH:
 		fprintf(stderr, "BRANCH @%i\n", OP_OFFSET(0));
 		return 2;
-
 	case LOL_BRANCH_Z:
 		fprintf(stderr, "BRANCH_Z @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
-
 	case LOL_BRANCH_NZ:
 		fprintf(stderr, "BRANCH_NZ @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
@@ -162,11 +190,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_DBG_PRINT_U8:
 		fprintf(stderr, "DBG_PRINT_U8 @%i\n", OP_OFFSET(0));
 		return 2;
-
 	case LOL_DBG_PRINT_I32:
 		fprintf(stderr, "DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
 		return 2;
-
 	case LOL_DBG_PRINT_I64:
 		fprintf(stderr, "DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
 		return 2;
