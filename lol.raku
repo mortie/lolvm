@@ -40,7 +40,7 @@ grammar Lol {
 		| <while-statm>
 		| <dbg-print-statm>
 		| <return-statm>
-		| <assign-statm>
+		| <decl-assign-statm>
 		| <expression>
 	}
 
@@ -60,7 +60,7 @@ grammar Lol {
 		'return' <expression>
 	}
 
-	rule assign-statm {
+	rule decl-assign-statm {
 		<identifier> '=' <expression>
 	}
 
@@ -203,7 +203,10 @@ class StackFrame {
 	has LocalVar %.vars is rw;
 	has LocalVar @.temps is rw;
 	has Int $.idx is rw = 0;
-	has Int $.max-size is rw = 0;
+
+	method has-temps() {
+		@.temps.Bool;
+	}
 
 	method has(Str $name) {
 		%.vars{$name}:exists;
@@ -217,19 +220,12 @@ class StackFrame {
 		%.vars{$name};
 	}
 
-	method define(Str $name, Type $type) {
+	method define(Str $name, LocalVar $var) {
 		if %.vars{$name}:exists {
 			die "Variable already exists: $name";
 		}
 
-		my $var = LocalVar.new(
-			index => $.idx,
-			type => $type,
-			temp => False,
-		);
 		%.vars{$name} = $var;
-		$.idx += $type.size;
-		$.max-size += $type.size;
 		$var;
 	}
 
@@ -240,9 +236,6 @@ class StackFrame {
 			temp => True,
 		);
 		$.idx += $type.size;
-		if $.idx > $.max-size {
-			$.max-size = $.idx;
-		}
 		@.temps.append($var);
 		$var;
 	}
@@ -382,87 +375,6 @@ class Program {
 		$lhs;
 	}
 
-	method find-expression-part-type($frame, $part) returns Type {
-		if $part<uninitialized>:exists {
-			$.type-from-cst($part<uninitialized><type>);
-		} elsif $part<num-literal>:exists {
-			%builtin-types<int>;
-		} elsif $part<bool-literal>:exists {
-			%builtin-types<bool>;
-		} elsif $part<group-expression>:exists {
-			$.find-expression-type($part<group-expression><expression>);
-		} elsif $part<func-call>:exists {
-			my $name = $part<func-call><identifier>.Str;
-			if not %.funcs{$name}:exists {
-				die "Unknown function: $name"
-			}
-
-			my $func = %.funcs{$name};
-			$func.return-var.type;
-		} elsif $part<locator>:exists {
-			my $locator = $part<locator>;
-			my $type = $frame.get($locator<identifier>.Str).type;
-
-			while $locator[0] {
-				$locator = $locator[0]<locator>;
-
-				if not $type.isa(StructType) {
-					die "Used accessor on non-struct type '{$type.desc}'";
-				}
-
-				my $name = $locator<identifier>.Str;
-				if not $type.fields{$name} {
-					die "Type '{$type.desc}' has no member '$name'";
-				}
-
-				$type = $type.fields{$name}.type;
-			}
-
-			$type;
-		} else {
-			die "Bad expression '$part'";
-		}
-	}
-
-	method find-expression-type($frame, $expr) returns Type {
-		if $expr<bin-op>:exists {
-			my $operator = $expr<bin-op><bin-operator>.Str;
-			if $operator eq any("==", "!=", "<", "<=", ">", ">=") {
-				%builtin-types<bool>;
-			} else {
-				$.reconcile-types(
-					$.find-expression-part-type($frame, $expr<bin-op><expression-part>),
-					$.find-expression-type($frame, $expr<bin-op><expression>));
-			}
-		} elsif $expr<expression-part>:exists {
-			$.find-expression-part-type($frame, $expr<expression-part>);
-		} else {
-			die "Bad expression '$expr'";
-		}
-	}
-
-	method populate-stack-frame($frame, @statms) {
-		for @statms -> $statm {
-			if $statm<block>:exists {
-				$.populate-stack-frame($frame, $statm<block>)
-			} elsif $statm<assign-statm>:exists {
-				my $name = $statm<assign-statm><identifier>.Str;
-				my $expr = $statm<assign-statm><expression>;
-				my $type = $.find-expression-type($frame, $expr);
-
-				if $frame.has($name) {
-					my $existing = $frame.get($name);
-					if not ($existing.type === $type) {
-						die "Variable '$name' redeclared as '{$type.desc}' " ~
-							"(was '{$existing.type.desc}')";
-					}
-				} else {
-					$frame.define($name, $type);
-				}
-			}
-		}
-	}
-
 	method compile-expr-part($frame, $part, Buf $out) returns LocalVar {
 		if $part<uninitialized> {
 			$frame.push-temp($.type-from-cst($part<uninitialized><type>));
@@ -541,6 +453,7 @@ class Program {
 			my $locator = $part<locator>;
 			my $var = $frame.get($locator<identifier>.Str);
 			my $type = $var.type;
+			say "var {$locator<identifier>.Str}: type '{$type.desc}', idx {$var.index}";
 			my $offset = 0;
 
 			while $locator[0] {
@@ -556,6 +469,7 @@ class Program {
 				}
 
 				my $field = $type.fields{$name};
+				say "field $name: off {$field.offset}, type {$field.type.desc}";
 				$offset += $field.offset;
 				$type = $field.type;
 			}
@@ -800,11 +714,29 @@ class Program {
 		} elsif $statm<return-statm> {
 			$.compile-expr-to-loc(
 				$frame, $frame.func.return-var, $statm<return-statm><expression>, $out);
-		} elsif $statm<assign-statm> {
-			my $name = $statm<assign-statm><identifier>.Str;
-			my $dest-var = $frame.get($name);
-			my $expr = $statm<assign-statm><expression>;
-			$.compile-expr-to-loc($frame, $dest-var, $expr, $out);
+		} elsif $statm<decl-assign-statm> {
+			my $name = $statm<decl-assign-statm><identifier>.Str;
+			my $expr = $statm<decl-assign-statm><expression>;
+
+			if $frame.has($name) {
+				$.compile-expr-to-loc($frame, $frame.get($name), $expr, $out);
+			} else {
+				if $frame.has-temps() {
+					die "Got declare assign statement while there are temporaries?";
+				}
+
+				my $var = $.compile-expr($frame, $expr, $out);
+				if not $var.temp {
+					my $new-var = $frame.push-temp($var.type);
+					$.generate-copy($new-var.index, $var.index, $var.type, $out);
+					$var = $new-var;
+				}
+
+				$frame.temps.pop();
+				$frame.define($name, $var);
+				say "declared variable $name at idx {$var.index}";
+				$var;
+			}
 		} elsif $statm<expression> {
 			my $var = $.compile-expr($frame, $statm<expression>, $out);
 			$frame.pop-if-temp($var);
@@ -836,7 +768,6 @@ class Program {
 			$params-index += $param.type.size;
 		}
 
-		$.populate-stack-frame($frame, $func.body<statement>);
 		$.compile-block($frame, $func.body, $out);
 
 		$out.append(LolOp::RETURN);
