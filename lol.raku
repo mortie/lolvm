@@ -78,11 +78,16 @@ grammar Lol {
 	}
 
 	rule expression-part {
+		| <uninitialized>
 		| <num-literal>
 		| <bool-literal>
 		| <group-expression>
 		| <func-call>
 		| <identifier>
+	}
+
+	rule uninitialized {
+		'uninitialized' <type>
 	}
 
 	rule group-expression {
@@ -276,7 +281,7 @@ class Program {
 		}
 	}
 
-	method lookup-type-from-cst($type-cst) returns Type {
+	method type-from-cst($type-cst) returns Type {
 		my $name = $type-cst<identifier>.Str;
 		if not %.types{$name}:exists {
 			die "Unknown type: $name";
@@ -294,7 +299,7 @@ class Program {
 		my %fields;
 		my $size = 0;
 		for $struct-decl<struct-fields><struct-field> -> $struct-field-cst {
-			my $field-type = $.lookup-type-from-cst($struct-field-cst<type>);
+			my $field-type = $.type-from-cst($struct-field-cst<type>);
 			my $field-name = $struct-field-cst<identifier>.Str;
 
 			if %fields{$field-name}:exists {
@@ -318,12 +323,12 @@ class Program {
 			die "A function named $name already exists!";
 		}
 
-		my $return-type = $.lookup-type-from-cst($func-decl<type>);
+		my $return-type = $.type-from-cst($func-decl<type>);
 		my $return-index = -$return-type.size;
 
 		my @params;
 		for $func-decl<formal-params>[0] -> $formal-param-cst {
-			my $type = $.lookup-type-from-cst($formal-param-cst<type>);
+			my $type = $.type-from-cst($formal-param-cst<type>);
 			$return-index -= $type.size;
 			@params.push(FuncParam.new(
 				type => $type,
@@ -366,7 +371,9 @@ class Program {
 	}
 
 	method find-expression-part-type($frame, $part) returns Type {
-		if $part<num-literal>:exists {
+		if $part<uninitialized>:exists {
+			$.type-from-cst($part<uninitialized><type>);
+		} elsif $part<num-literal>:exists {
 			%builtin-types<int>;
 		} elsif $part<bool-literal>:exists {
 			%builtin-types<bool>;
@@ -429,7 +436,9 @@ class Program {
 	}
 
 	method compile-expr-part($frame, $part, Buf $out) returns LocalVar {
-		if $part<num-literal> {
+		if $part<uninitialized> {
+			$frame.push-temp($.type-from-cst($part<uninitialized><type>));
+		} elsif $part<num-literal> {
 			my $temp = $frame.push-temp(%builtin-types<int>);
 			$out.append(LolOp::SETI_32);
 			append-i16le($out, $temp.index);
@@ -508,7 +517,10 @@ class Program {
 	}
 
 	method compile-expr-part-to-loc($frame, LocalVar $dest, $part, Buf $out) {
-		if $part<num-literal> {
+		if $part<uninitialized> {
+			my $type = $.type-from-cst($part<uninitialized><type>);
+			$.reconcile-types($dest.type, $type);
+		} elsif $part<num-literal> {
 			if not ($dest.type === %builtin-types<int>) {
 				die "Invalid destination type for number literal";
 			}
