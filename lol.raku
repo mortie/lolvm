@@ -37,6 +37,7 @@ grammar Lol {
 	rule statement {
 		| <block>
 		| <if-statm>
+		| <while-statm>
 		| <dbg-print-statm>
 		| <return-statm>
 		| <assign-statm>
@@ -45,6 +46,10 @@ grammar Lol {
 
 	rule if-statm {
 		'if' <expression> <statement> ('else' <statement>)?
+	}
+
+	rule while-statm {
+		'while' <expression> <statement>
 	}
 
 	rule dbg-print-statm {
@@ -387,7 +392,7 @@ class Program {
 		if $expr<bin-op>:exists {
 			my $operator = $expr<bin-op><bin-operator>.Str;
 			say "hy opearotr $operator";
-			if ("==", "!=", "<", "<=", ">", ">=").contains($operator) {
+			if $operator eq any("==", "!=", "<", "<=", ">", ">=") {
 				%builtin-types<bool>;
 			} else {
 				$.reconcile-types(
@@ -539,7 +544,7 @@ class Program {
 			my $lhs = $expr<bin-op><expression-part>;
 			my $rhs = $expr<bin-op><expression>;
 			my $type;
-			if ("==", "!=", "<", "<=", ">", ">=").contains($operator) {
+			if $operator eq any("==", "!=", "<", "<=", ">", ">=") {
 				$type = %builtin-types<bool>;
 			} else {
 				$type = $.reconcile-types(
@@ -707,6 +712,25 @@ class Program {
 			} else {
 				$out.write-int16($fixup-skip-if-body-idx, +$out - $if-start-idx, LittleEndian);
 			}
+		} elsif $statm<while-statm> {
+			say "whlie statm at {+$out}";
+			my $while-start-idx = +$out;
+			my $cond-var = $.compile-expr($frame, $statm<while-statm><expression>, $out);
+			my $skip-body-branch-idx = +$out;
+			$out.append(LolOp::BRANCH_Z);
+			append-i16le($out, $cond-var.index);
+			my $fixup-skip-body-idx = +$out;
+			append-i16le($out, 0);
+			$frame.pop-if-temp($cond-var);
+
+			$.compile-statm($frame, $statm<while-statm><statement>, $out);
+
+			my $jump-back-delta = $while-start-idx - +$out;
+			$out.append(LolOp::BRANCH);
+			append-i16le($out, $jump-back-delta);
+
+			say "whlie statm done at {+$out}";
+			$out.write-int16($fixup-skip-body-idx, +$out - $skip-body-branch-idx, LittleEndian);
 		} elsif $statm<return-statm> {
 			$.compile-expr-to-loc(
 				$frame, $frame.func.return-var, $statm<return-statm><expression>, $out);
