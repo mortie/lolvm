@@ -157,7 +157,7 @@ class FuncDecl {
 	has FuncParam @.params;
 	has $.body;
 
-	has Int $.offset is rw;
+	has Int $.offset is rw = Nil;
 }
 
 my %builtin-types = %(
@@ -241,10 +241,17 @@ sub append-i32le(Buf $buf, int32 $value) {
 	$buf.write-int32(+$buf, $value, LittleEndian);
 }
 
+class FuncCallFixup {
+	has uint32 $.location;
+	has Str $.name;
+};
+
 class Program {
 	has Type %.types;
 	has FuncDecl @.funcs;
 	has FuncDecl %.funcs-map;
+
+	has FuncCallFixup @.func-call-fixups;
 
 	method register-defaults() {
 		for %builtin-types.kv -> $k, $v {
@@ -420,7 +427,7 @@ class Program {
 		} elsif $part<group-expression> {
 			$.compile-expr($frame, $part<group-expression><expression>, $out);
 		} elsif $part<func-call> {
-			my $name = $part<func-call><identifier>;
+			my $name = $part<func-call><identifier>.Str;
 			if not %.funcs-map{$name}:exists {
 				die "Call to undefined function '$name'";
 			}
@@ -451,8 +458,18 @@ class Program {
 			}
 
 			$out.append(LolOp::CALL);
+
 			append-i16le($out, $frame.idx);
-			append-u32le($out, $func.offset);
+
+			if $func.offset.defined {
+				append-u32le($out, $func.offset);
+			} else {
+				$.func-call-fixups.append(FuncCallFixup.new(
+					location => +$out,
+					name => $name,
+				));
+				append-u32le($out, 0);
+			}
 
 			while @param-vars {
 				my $var = @param-vars.pop();
@@ -676,6 +693,11 @@ class Program {
 		}
 
 		$out.write-uint32($main-offset-fixup-idx, $main-func.offset, LittleEndian);
+
+		for @.func-call-fixups -> $fixup {
+			my $func = $.funcs-map{$fixup.name};
+			$out.write-uint32($fixup.location, $func.offset, LittleEndian);
+		}
 	}
 }
 
