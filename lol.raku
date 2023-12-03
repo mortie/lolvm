@@ -399,7 +399,6 @@ class Program {
 			}
 
 			my $field = $type.fields{$name};
-			say "field $name: off {$field.offset}, type {$field.type.desc}";
 			$offset += $field.offset;
 			$type = $field.type;
 		}
@@ -701,7 +700,6 @@ class Program {
 				$out.write-int16($fixup-skip-if-body-idx, +$out - $if-start-idx, LittleEndian);
 			}
 		} elsif $statm<while-statm> {
-			say "whlie statm at {+$out}";
 			my $while-start-idx = +$out;
 			my $cond-var = $.compile-expr($frame, $statm<while-statm><expression>, $out);
 			my $skip-body-branch-idx = +$out;
@@ -717,7 +715,6 @@ class Program {
 			$out.append(LolOp::BRANCH);
 			append-i16le($out, $jump-back-delta);
 
-			say "whlie statm done at {+$out}";
 			$out.write-int16($fixup-skip-body-idx, +$out - $skip-body-branch-idx, LittleEndian);
 		} elsif $statm<return-statm> {
 			$.compile-expr-to-loc(
@@ -742,7 +739,6 @@ class Program {
 
 				$frame.temps.pop();
 				$frame.define($name, $var);
-				say "declared variable $name at idx {$var.index}";
 				$var;
 			}
 		} elsif $statm<assign-statm> {
