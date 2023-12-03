@@ -342,7 +342,7 @@ void lolvm_run(struct lolvm *vm)
 	}
 }
 
-void lolvm_debugger(struct lolvm *vm)
+void lolvm_step_manually(struct lolvm *vm)
 {
 	while (!vm->halted) {
 		fprintf(stderr, "sptr: %zu, cptr: %zu\n", vm->sptr, vm->cptr);
@@ -368,10 +368,31 @@ void lolvm_debugger(struct lolvm *vm)
 
 int main(int argc, char **argv)
 {
-	printf("=== Loading: test.blol\n");
+	int do_step = 0;
+	int do_print = 0;
+	const char *path = NULL;
+
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "--step") == 0) {
+			do_step = 1;
+		} else if (strcmp(argv[i], "--print") == 0) {
+			do_print = 1;
+		} else if (argv[i][0] == '-') {
+			fprintf(stderr, "Unknown option: %s\n", argv[i]);
+			return 1;
+		} else {
+			path = argv[i];
+		}
+	}
+
+	if (!path) {
+		printf("Usage: %s <path>\n", argv[0]);
+		return 1;
+	}
+
 	unsigned char bytecode[1024];
 	bytecode[0] = LOL_HALT;
-	FILE *f = fopen("test.blol", "rb");
+	FILE *f = fopen(path, "rb");
 	if (!f) {
 		return 1;
 	}
@@ -379,15 +400,16 @@ int main(int argc, char **argv)
 	size_t n = fread(bytecode, 1, sizeof(bytecode), f);
 	fclose(f);
 
-	printf("=== Pretty print:\n");
-	pretty_print(bytecode, n);
+	if (do_print) {
+		pretty_print(bytecode, n);
+		return 0;
+	}
 
 	struct lolvm vm;
 	lolvm_init(&vm, bytecode);
 
-	printf("=== Execute:\n");
-	if (argv[1] && strcmp(argv[1], "--step") == 0) {
-		lolvm_debugger(&vm);
+	if (do_step) {
+		lolvm_step_manually(&vm);
 	} else {
 		lolvm_run(&vm);
 	}

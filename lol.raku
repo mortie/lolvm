@@ -812,20 +812,22 @@ class Program {
 	}
 }
 
-say "Compiling: test.lol -> test.blol";
-my $cst = Lol.parsefile('test.lol');
-if not $cst.defined {
-	die "Parse error!";
+sub MAIN($in-path, $out-path) {
+	say "Compiling: $in-path -> $out-path";
+	my $cst = Lol.parsefile($in-path);
+	if not $cst.defined {
+		die "Parse error!";
+	}
+
+	my $prog = Program.new();
+	$prog.register-defaults();
+	$prog.analyze($cst);
+	my $out = Buf.new();
+	$prog.compile-functions($out);
+
+	my $fh = open $out-path, :w, :bin;
+	$fh.write($out);
+	$fh.close();
+
+	say "Done.";
 }
-
-my $prog = Program.new();
-$prog.register-defaults();
-$prog.analyze($cst);
-my $out = Buf.new();
-$prog.compile-functions($out);
-
-my $fh = open "test.blol", :w, :bin;
-$fh.write($out);
-$fh.close();
-
-say "Done.";
