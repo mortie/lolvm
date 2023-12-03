@@ -41,6 +41,7 @@ grammar Lol {
 		| <dbg-print-statm>
 		| <return-statm>
 		| <decl-assign-statm>
+		| <assign-statm>
 		| <expression>
 	}
 
@@ -62,6 +63,10 @@ grammar Lol {
 
 	rule decl-assign-statm {
 		<identifier> '=' <expression>
+	}
+
+	rule assign-statm {
+		<locator> '=' <expression>
 	}
 
 	rule expression {
@@ -375,6 +380,37 @@ class Program {
 		$lhs;
 	}
 
+	method locate-by-locator($frame, $locator-param) returns LocalVar {
+		my $locator = $locator-param; # Need locator to be read-writeable
+		my $var = $frame.get($locator<identifier>.Str);
+		my $type = $var.type;
+		my $offset = 0;
+
+		while $locator[0] {
+			$locator = $locator[0]<locator>;
+
+			if not $type.isa(StructType) {
+				die "Used accessor on non-struct type '{$type.desc}'";
+			}
+
+			my $name = $locator<identifier>.Str;
+			if not $type.fields{$name} {
+				die "Type '{$type.desc}' has no member '$name'";
+			}
+
+			my $field = $type.fields{$name};
+			say "field $name: off {$field.offset}, type {$field.type.desc}";
+			$offset += $field.offset;
+			$type = $field.type;
+		}
+
+		LocalVar.new(
+			index => $var.index + $offset,
+			type => $type,
+			temp => False,
+		)
+	}
+
 	method compile-expr-part($frame, $part, Buf $out) returns LocalVar {
 		if $part<uninitialized> {
 			$frame.push-temp($.type-from-cst($part<uninitialized><type>));
@@ -450,35 +486,7 @@ class Program {
 
 			$return-val;
 		} elsif $part<locator> {
-			my $locator = $part<locator>;
-			my $var = $frame.get($locator<identifier>.Str);
-			my $type = $var.type;
-			say "var {$locator<identifier>.Str}: type '{$type.desc}', idx {$var.index}";
-			my $offset = 0;
-
-			while $locator[0] {
-				$locator = $locator[0]<locator>;
-
-				if not $type.isa(StructType) {
-					die "Used accessor on non-struct type '{$type.desc}'";
-				}
-
-				my $name = $locator<identifier>.Str;
-				if not $type.fields{$name} {
-					die "Type '{$type.desc}' has no member '$name'";
-				}
-
-				my $field = $type.fields{$name};
-				say "field $name: off {$field.offset}, type {$field.type.desc}";
-				$offset += $field.offset;
-				$type = $field.type;
-			}
-
-			LocalVar.new(
-				index => $var.index + $offset,
-				type => $type,
-				temp => False,
-			)
+			$.locate-by-locator($frame, $part<locator>);
 		} else {
 			die "Bad expression '$part'";
 		}
@@ -737,6 +745,10 @@ class Program {
 				say "declared variable $name at idx {$var.index}";
 				$var;
 			}
+		} elsif $statm<assign-statm> {
+			my $var = $.locate-by-locator($frame, $statm<assign-statm><locator>);
+			my $expr = $statm<assign-statm><expression>;
+			$.compile-expr-to-loc($frame, $var, $expr, $out);
 		} elsif $statm<expression> {
 			my $var = $.compile-expr($frame, $statm<expression>, $out);
 			$frame.pop-if-temp($var);
