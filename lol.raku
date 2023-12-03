@@ -83,7 +83,7 @@ grammar Lol {
 		| <bool-literal>
 		| <group-expression>
 		| <func-call>
-		| <identifier>
+		| <locator>
 	}
 
 	rule uninitialized {
@@ -96,6 +96,10 @@ grammar Lol {
 
 	rule func-call {
 		<identifier> '(' <expression>* %% ',' ')'
+	}
+
+	rule locator {
+		<identifier> ("'s" <locator>)?
 	}
 
 	rule type {
@@ -158,8 +162,13 @@ class Type {
 class PrimitiveType is Type {
 }
 
+class StructField {
+	has Int $.offset;
+	has Type $.type;
+}
+
 class StructType is Type {
-	has %.fields;
+	has StructField %.fields;
 }
 
 class FuncParam {
@@ -306,7 +315,10 @@ class Program {
 				die "Duplicate field name: $field-name";
 			}
 
-			%fields{$field-name} = $field-type;
+			%fields{$field-name} = StructField.new(
+				offset => $size,
+				type => $field-type,
+			);
 			$size += $field-type.size;
 		}
 
@@ -357,7 +369,7 @@ class Program {
 			} elsif $toplevel<func-decl> {
 				$.analyze-func-decl($toplevel<func-decl>);
 			} else {
-				die "Bad toplevel";
+				die "Bad toplevel $toplevel";
 			}
 		}
 	}
@@ -387,9 +399,26 @@ class Program {
 
 			my $func = %.funcs{$name};
 			$func.return-var.type;
-		} elsif $part<identifier>:exists {
-			my $name = $part<identifier>.Str;
-			$frame.get($name).type;
+		} elsif $part<locator>:exists {
+			my $locator = $part<locator>;
+			my $type = $frame.get($locator<identifier>.Str).type;
+
+			while $locator[0] {
+				$locator = $locator[0]<locator>;
+
+				if not $type.isa(StructType) {
+					die "Used accessor on non-struct type '{$type.desc}'";
+				}
+
+				my $name = $locator<identifier>.Str;
+				if not $type.fields{$name} {
+					die "Type '{$type.desc}' has no member '$name'";
+				}
+
+				$type = $type.fields{$name}.type;
+			}
+
+			$type;
 		} else {
 			die "Bad expression '$part'";
 		}
@@ -398,7 +427,6 @@ class Program {
 	method find-expression-type($frame, $expr) returns Type {
 		if $expr<bin-op>:exists {
 			my $operator = $expr<bin-op><bin-operator>.Str;
-			say "hy opearotr $operator";
 			if $operator eq any("==", "!=", "<", "<=", ">", ">=") {
 				%builtin-types<bool>;
 			} else {
@@ -509,8 +537,34 @@ class Program {
 			}
 
 			$return-val;
-		} elsif $part<identifier> {
-			$frame.get($part<identifier>.Str);
+		} elsif $part<locator> {
+			my $locator = $part<locator>;
+			my $var = $frame.get($locator<identifier>.Str);
+			my $type = $var.type;
+			my $offset = 0;
+
+			while $locator[0] {
+				$locator = $locator[0]<locator>;
+
+				if not $type.isa(StructType) {
+					die "Used accessor on non-struct type '{$type.desc}'";
+				}
+
+				my $name = $locator<identifier>.Str;
+				if not $type.fields{$name} {
+					die "Type '{$type.desc}' has no member '$name'";
+				}
+
+				my $field = $type.fields{$name};
+				$offset += $field.offset;
+				$type = $field.type;
+			}
+
+			LocalVar.new(
+				index => $var.index + $offset,
+				type => $type,
+				temp => False,
+			)
 		} else {
 			die "Bad expression '$part'";
 		}
@@ -821,6 +875,9 @@ class Program {
 
 say "Compiling: test.lol -> test.blol";
 my $cst = Lol.parsefile('test.lol');
+if not $cst.defined {
+	die "Parse error!";
+}
 
 my $prog = Program.new();
 $prog.register-defaults();
