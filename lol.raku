@@ -588,7 +588,8 @@ class Program {
 			my $cond-var = $.compile-expr($frame, $statm<if-statm><expression>, $out);
 			my $if-start-idx = +$out;
 			$out.append(LolOp::BRANCH_Z);
-			my $fixup-skip-if-body-idx= +$out;
+			append-i16le($out, $cond-var.index);
+			my $fixup-skip-if-body-idx = +$out;
 			$out.append(0, 0);
 			$frame.pop-if-temp($cond-var);
 

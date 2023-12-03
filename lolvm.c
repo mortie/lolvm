@@ -73,11 +73,6 @@ static uint64_t parse_u64(unsigned char *ptr)
 		((uint64_t)ptr[7] << 56);
 }
 
-struct stack_frame {
-	size_t sptr;
-	size_t iptr;
-};
-
 size_t pretty_print_instruction(unsigned char *instr)
 {
 	#define OP_U8(offset) (instr[iptr + offset])
@@ -142,11 +137,11 @@ size_t pretty_print_instruction(unsigned char *instr)
 		return 2;
 
 	case LOL_BRANCH_Z:
-		fprintf(stderr, "BRANCH_Z @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(0));
+		fprintf(stderr, "BRANCH_Z @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 
 	case LOL_BRANCH_NZ:
-		fprintf(stderr, "BRANCH_NZ @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(0));
+		fprintf(stderr, "BRANCH_NZ @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 
 	case LOL_DBG_PRINT_U8:
@@ -166,6 +161,8 @@ size_t pretty_print_instruction(unsigned char *instr)
 		return 0;
 	}
 
+	fprintf(stderr, "Bad instruction (%02x)\n", *instr);
+
 	#undef OP_U8
 	#undef OP_OFFSET
 	#undef OP_U32
@@ -176,61 +173,94 @@ size_t pretty_print_instruction(unsigned char *instr)
 	return 0;
 }
 
-void evaluate(unsigned char *instrs)
-{
-	unsigned char stack[1024];
-	struct stack_frame callstack[64];
-	size_t sptr = 0;
+void pretty_print(unsigned char *instrs, size_t size) {
 	size_t iptr = 0;
-	size_t cptr = 0;
+	while (iptr < size)  {
+		fprintf(stderr, "%04zu ", iptr);
+		iptr += pretty_print_instruction(&instrs[iptr]) + 1;
+	}
+}
 
-	#define OP_U8(offset) (instrs[iptr + offset])
-	#define OP_OFFSET(offset) ((int16_t)parse_u16(&instrs[iptr + offset]))
-	#define OP_U32(offset) parse_u32(&instrs[iptr + offset])
+struct lolvm_stack_frame {
+	size_t sptr;
+	size_t iptr;
+};
+
+struct lolvm {
+	unsigned char *instrs;
+	size_t iptr;
+	size_t sptr;
+	size_t cptr;
+	int halted;
+	unsigned char stack[1024];
+	struct lolvm_stack_frame callstack[64];
+};
+
+void lolvm_init(struct lolvm *vm, unsigned char *instrs)
+{
+	vm->instrs = instrs;
+	vm->sptr = 0;
+	vm->iptr = 0;
+	vm->cptr = 0;
+	vm->halted = 0;
+
+	memset(&vm->stack, 0xFF, sizeof(vm->stack));
+	memset(&vm->callstack, 0xFF, sizeof(vm->callstack));
+}
+
+void lolvm_step(struct lolvm *vm)
+{
+	#define OP_U8(offset) (vm->instrs[vm->iptr + offset])
+	#define OP_OFFSET(offset) ((int16_t)parse_u16(&vm->instrs[vm->iptr + offset]))
+	#define OP_U32(offset) parse_u32(&vm->instrs[vm->iptr + offset])
 	#define OP_I32(offset) ((int32_t)OP_U32(offset))
-	#define OP_U64(offset) parse_u64(&instrs[iptr + offset])
+	#define OP_U64(offset) parse_u64(&vm->instrs[vm->iptr + offset])
 	#define OP_I64(offset) ((int64_t)OP_U64(offset))
-	#define STACK(offset) (&stack[sptr + (offset)])
+	#define STACK(offset) (&vm->stack[vm->sptr + (offset)])
 
-	while (1) switch ((enum lolvm_op)instrs[iptr++]) {
-#define X(name, n, code...) case LOL_ ## name: code iptr += n; break;
+	switch ((enum lolvm_op)vm->instrs[vm->iptr++]) {
+#define X(name, n, code...) case LOL_ ## name: code vm->iptr += n; break;
 #include "instructions.x.h"
 #undef X
 
 	case LOL_CALL:
-		callstack[cptr].sptr = sptr;
-		callstack[cptr].iptr = iptr + 6;
-		cptr += 1;
-		sptr += OP_OFFSET(0);
-		iptr = OP_U32(2);
+		vm->callstack[vm->cptr].sptr = vm->sptr;
+		vm->callstack[vm->cptr].iptr = vm->iptr + 6;
+		vm->cptr += 1;
+		vm->sptr += OP_OFFSET(0);
+		vm->iptr = OP_U32(2);
 		break;
 
 	case LOL_RETURN:
-		cptr -= 1;
-		sptr = callstack[cptr].sptr;
-		iptr = callstack[cptr].iptr;
+		vm->cptr -= 1;
+		vm->sptr = vm->callstack[vm->cptr].sptr;
+		vm->iptr = vm->callstack[vm->cptr].iptr;
 		break;
 
 	case LOL_BRANCH:
-		iptr += OP_OFFSET(0);
+		vm->iptr += OP_OFFSET(0) - 1;
 		break;
 
 	case LOL_BRANCH_Z:
 		if (*STACK(OP_OFFSET(0)) == 0) {
-			iptr += OP_OFFSET(2);
+			vm->iptr += OP_OFFSET(2) - 1;
+		} else {
+			vm->iptr += 4;
 		}
 		break;
 
 	case LOL_BRANCH_NZ:
 		if (*STACK(OP_OFFSET(0)) != 0) {
-			iptr += OP_OFFSET(2);
+			vm->iptr += OP_OFFSET(2) - 1;
+		} else {
+			vm->iptr += 4;
 		}
 		break;
 
 	case LOL_DBG_PRINT_U8: {
 		uint8_t val = *STACK(OP_OFFSET(0));
 		printf("DBG PRINT @%" PRIi16 ": %" PRIu8 "\n", OP_OFFSET(0), val);
-		iptr += 2;
+		vm->iptr += 2;
 		break;
 	}
 
@@ -238,7 +268,7 @@ void evaluate(unsigned char *instrs)
 		int32_t val;
 		memcpy(&val, STACK(OP_OFFSET(0)), 4);
 		printf("DBG PRINT @%" PRIi16 ": %" PRIi32 "\n", OP_OFFSET(0), val);
-		iptr += 2;
+		vm->iptr += 2;
 		break;
 	}
 
@@ -246,12 +276,13 @@ void evaluate(unsigned char *instrs)
 		int64_t val;
 		memcpy(&val, STACK(OP_OFFSET(0)), 8);
 		printf("DBG PRINT @%" PRIi16 ": %" PRIi64 "\n", OP_OFFSET(0), val);
-		iptr += 2;
+		vm->iptr += 2;
 		break;
 	}
 
 	case LOL_HALT:
-		return;
+		vm->halted = 1;
+		break;
 	}
 
 	#undef OP_U8
@@ -263,15 +294,38 @@ void evaluate(unsigned char *instrs)
 	#undef STACK
 }
 
-void pretty_print(unsigned char *instrs, size_t size) {
-	size_t iptr = 0;
-	while (iptr < size)  {
-		fprintf(stderr, "%04zu ", iptr);
-		iptr += pretty_print_instruction(&instrs[iptr]) + 1;
+void lolvm_run(struct lolvm *vm)
+{
+	while (!vm->halted) {
+		lolvm_step(vm);
 	}
 }
 
-int main()
+void lolvm_debugger(struct lolvm *vm)
+{
+	while (!vm->halted) {
+		fprintf(stderr, "sptr: %zu, cptr: %zu\n", vm->sptr, vm->cptr);
+		fprintf(stderr, "%04zu: ", vm->iptr);
+		size_t n = pretty_print_instruction(&vm->instrs[vm->iptr]);
+		for (size_t i = 0; i < n + 1; ++i) {
+			if (i == n) {
+				fprintf(stderr, "%02x\n", vm->instrs[vm->iptr + i]);
+			} else {
+				fprintf(stderr, "%02x ", vm->instrs[vm->iptr + i]);
+			}
+		}
+
+		int ch = getchar();
+		if (ch == 'c') {
+			lolvm_run(vm);
+			return;
+		}
+
+		lolvm_step(vm);
+	}
+}
+
+int main(int argc, char **argv)
 {
 	printf("=== Loading: test.blol\n");
 	unsigned char bytecode[1024];
@@ -286,6 +340,14 @@ int main()
 
 	printf("=== Pretty print:\n");
 	pretty_print(bytecode, n);
+
+	struct lolvm vm;
+	lolvm_init(&vm, bytecode);
+
 	printf("=== Execute:\n");
-	evaluate(bytecode);
+	if (argv[1] && strcmp(argv[1], "--step") == 0) {
+		lolvm_debugger(&vm);
+	} else {
+		lolvm_run(&vm);
+	}
 }
