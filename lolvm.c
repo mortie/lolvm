@@ -399,21 +399,30 @@ void lolvm_step_manually(struct lolvm *vm)
 
 int main(int argc, char **argv)
 {
-	int do_step = 0;
 	int do_print = 0;
+	int do_step = 0;
+	int do_run = -1;
 	const char *path = NULL;
 
 	for (int i = 1; i < argc; ++i) {
 		if (strcmp(argv[i], "--step") == 0) {
 			do_step = 1;
+			if (do_run < 0) do_run = 0;
 		} else if (strcmp(argv[i], "--print") == 0) {
 			do_print = 1;
+			if (do_run < 0) do_run = 0;
+		} else if (strcmp(argv[i], "--run") == 0) {
+			do_run = 1;
 		} else if (argv[i][0] == '-') {
 			fprintf(stderr, "Unknown option: %s\n", argv[i]);
 			return 1;
 		} else {
 			path = argv[i];
 		}
+	}
+
+	if (do_run < 0) {
+		do_run = 0;
 	}
 
 	if (!path) {
@@ -433,15 +442,17 @@ int main(int argc, char **argv)
 
 	if (do_print) {
 		pretty_print(bytecode, n);
-		return 0;
 	}
 
-	struct lolvm vm;
-	lolvm_init(&vm, bytecode);
-
 	if (do_step) {
+		struct lolvm vm;
+		lolvm_init(&vm, bytecode);
 		lolvm_step_manually(&vm);
-	} else {
+	}
+
+	if (do_run) {
+		struct lolvm vm;
+		lolvm_init(&vm, bytecode);
 		lolvm_run(&vm);
 	}
 }

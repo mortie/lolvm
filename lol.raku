@@ -108,7 +108,7 @@ grammar Lol {
 	}
 
 	rule locator-suffix {
-		<locator-dereference> | <locator-member>
+		<locator-dereference> | <locator-member> | <locator-reference>
 	}
 
 	rule locator-dereference {
@@ -119,12 +119,16 @@ grammar Lol {
 		"'s" <identifier>
 	}
 
+	rule locator-reference {
+		'&'
+	}
+
 	rule type {
 		<identifier> ('[' <type>+ %% ',' ']')?
 	}
 
 	token identifier {
-		<:alpha>+
+		(<:alpha> | <:numeric> | '-' | '_')+
 	}
 
 	token num-literal {
@@ -133,6 +137,10 @@ grammar Lol {
 
 	token bool-literal {
 		true | false
+	}
+
+	token ws {
+		(<!ww> \s+ | '//' \N* \n)*
 	}
 }
 
@@ -210,6 +218,7 @@ class LocalLocation is Location {
 
 class DereferenceLocation is Location {
 	has LocalLocation $.local;
+	has Int $.offset is rw;
 	has Bool $.dereference-in-place;
 }
 
@@ -279,8 +288,8 @@ class StackFrame {
 		if $var.temp {
 			my $popped-var = @.temps.pop();
 			if not ($var === $popped-var) {
-				die "Popped non-top-of-stack variable at index {$var.index} " ~
-					"(top has index {$popped-var.index}";
+				die "Popped non-top-of-stack '{$var.type.name}' variable at index {$var.index} " ~
+					"(top '{$var.type.name}' has index {$popped-var.index})";
 			}
 
 			$.idx -= $var.type.size;
@@ -298,6 +307,14 @@ sub append-u32le(Buf $buf, uint32 $value) {
 
 sub append-i32le(Buf $buf, int32 $value) {
 	$buf.write-int32(+$buf, $value, LittleEndian);
+}
+
+sub append-u64le(Buf $buf, uint64 $value) {
+	$buf.write-uint64(+$buf, $value, LittleEndian);
+}
+
+sub append-i64le(Buf $buf, int64 $value) {
+	$buf.write-int64(+$buf, $value, LittleEndian);
 }
 
 class FuncCallFixup {
@@ -318,6 +335,21 @@ class Program {
 		}
 	}
 
+	method get-pointer-type-to(Type $pointee) {
+		my $name = "ptr[{$pointee.name}]";
+		if %.types{$name}:exists {
+			%.types{$name};
+		} else {
+			my $type = PointerType.new(
+				pointee => $pointee,
+				size => 8,
+				name => $name,
+			);
+			%.types{$name} = $type;
+			$type;
+		}
+	}
+
 	method type-from-cst($type-cst) returns Type {
 		my $name = $type-cst<identifier>.Str;
 
@@ -327,18 +359,7 @@ class Program {
 			}
 
 			my $pointee = $.type-from-cst($type-cst[0]<type>[0]);
-			my $name = "ptr[{$pointee.name}]";
-			if %.types{$name}:exists {
-				%.types{$name}
-			} else {
-				my $type = PointerType.new(
-					pointee => $pointee,
-					size => 8,
-					name => $name,
-				);
-				%.types{$name} = $type;
-				$type;
-			}
+			$.get-pointer-type-to($pointee);
 		} elsif %.types{$name}:exists {
 			%.types{$name};
 		} else {
@@ -447,11 +468,17 @@ class Program {
 				}
 
 				my $field = $var.type.fields{$name};
-				$var = LocalLocation.new(
-					type => $field.type,
-					index => $var.index + $field.offset,
-					temp => False,
-				);
+
+				if $var.isa(LocalLocation) {
+					$var = LocalLocation.new(
+						type => $field.type,
+						index => $var.index + $field.offset,
+						temp => False,
+					);
+				} elsif $var.isa(DereferenceLocation) {
+					$var.offset += $field.offset;
+					$var.type = $field.type;
+				}
 			} elsif $suffix<locator-dereference> {
 				if not $var.type.isa(PointerType) {
 					die "Dereference of non-pointer type '{$var.type.name}'";
@@ -460,6 +487,8 @@ class Program {
 				if $var.isa(DereferenceLocation) {
 					if not $local-var.defined {
 						$local-var = $frame.push-temp($var.type);
+					} elsif not $local-var.isa(PointerType) {
+						die "Deref of non-pointer type!";
 					}
 
 					$out.append(LolOp::LOAD_64);
@@ -469,6 +498,7 @@ class Program {
 					$var = DereferenceLocation.new(
 						local => $local-var,
 						type => $var.type.pointee,
+						offset => 0,
 						dereference-in-place => True,
 					);
 				} elsif $var.isa(LocalLocation) {
@@ -479,10 +509,23 @@ class Program {
 					$var = DereferenceLocation.new(
 						local => $var,
 						type => $var.type.pointee,
+						offset => 0,
 						dereference-in-place => False,
 					);
 				} else {
 					die "Bad location type";
+				}
+			} elsif $suffix<locator-reference> {
+				if $var.isa(DereferenceLocation) {
+					$var = $var.local;
+				} elsif $local-var.defined {
+					die "Not supported yet!!"
+				} else {
+					$local-var = $frame.push-temp($.get-pointer-type-to($var.type));
+					$out.append(LolOp::REF);
+					append-i16le($out, $local-var.index);
+					append-i16le($out, $var.index);
+					$var = $local-var;
 				}
 			}
 		}
@@ -531,7 +574,8 @@ class Program {
 				my $expr = $part<func-call><expression>[$i];
 				my $var = $.compile-expr($frame, $expr, $out);
 				if not ($var.type === $param.type) {
-					die "Function call with invalid parameter type";
+					die "Function call with invalid parameter type: " ~
+						"Expected '{$param.type.name}', got '{$var.type.name}'";
 				}
 
 				if $var.temp {
@@ -540,7 +584,6 @@ class Program {
 					my $v = $frame.push-temp($var.type);
 					$.generate-copy($v.index, $var.index, $var.type.size, $out);
 					@param-vars.append($v);
-					$frame.pop-if-temp($v);
 				}
 			}
 
@@ -571,6 +614,13 @@ class Program {
 			} elsif $var.isa(DereferenceLocation) {
 				my $local = $var.local;
 				if $var.dereference-in-place {
+					if $var.offset != 0 {
+						$out.append(LolOp::ADDI_64);
+						append-i16le($local.index);
+						append-i16le($local.index);
+						append-u64le($var.offset);
+					}
+
 					$.generate-load($local.index, $local.index, $var.type.size, $out);
 					my $size-diff = $var.type.size - $local.type.size;
 
@@ -579,7 +629,19 @@ class Program {
 					$local;
 				} else {
 					my $temp = $frame.push-temp($var.type);
-					$.generate-load($temp.index, $local.index, $temp.type.size, $out);
+
+					if $var.offset == 0 {
+						$.generate-load($temp.index, $local.index, $temp.type.size, $out);
+					} else {
+						my $ptr-var = $frame.push-temp($local.type);
+						$out.append(LolOp::ADDI_64);
+						append-i16le($out, $ptr-var.index);
+						append-i16le($out, $local.index);
+						append-u64le($out, $var.offset);
+						$.generate-load($temp.index, $ptr-var.index, $temp.type.size, $out);
+						$frame.pop-if-temp($ptr-var);
+					}
+
 					$temp;
 				}
 			} else {
@@ -876,9 +938,28 @@ class Program {
 				$var;
 			}
 		} elsif $statm<assign-statm> {
-			my $var = $.locate-by-locator($frame, $statm<assign-statm><locator>);
+			my $var = $.locate-by-locator($frame, $statm<assign-statm><locator>, $out);
 			my $expr = $statm<assign-statm><expression>;
-			$.compile-expr-to-loc($frame, $var, $expr, $out);
+			if $var.isa(LocalLocation) {
+				$.compile-expr-to-loc($frame, $var, $expr, $out);
+			} elsif $var.isa(DereferenceLocation) {
+				my $temp = $.compile-expr($frame, $expr, $out);
+				if not ($temp.type === $var.type) {
+					die "Expected '{$var.type.name}', got '{$temp.type.name}'";
+				}
+				if $var.offset != 0 {
+					my $temp-ptr = $frame.push-temp($var.local.type);
+					$out.append(LolOp::ADDI_64);
+					append-i16le($out, $temp-ptr.index);
+					append-i16le($out, $var.local.index);
+					append-u32le($out, $var.offset);
+					$.generate-store($temp-ptr.index, $temp.index, $var.type.size, $out);
+					$frame.pop-if-temp($temp-ptr);
+				} else {
+					$.generate-store($var.local.index, $temp.index, $var.type.size, $out);
+				}
+				$frame.pop-if-temp($temp);
+			}
 		} elsif $statm<expression> {
 			my $var = $.compile-expr($frame, $statm<expression>, $out);
 			$frame.pop-if-temp($var);
