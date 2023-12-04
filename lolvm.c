@@ -27,6 +27,13 @@
 	X(LE_U8)    /* dest @, a @, b @ */ \
 	X(LE_I32)   /* dest @, a @, b @ */ \
 	X(LE_I64)   /* dest @, a @, b @ */ \
+	X(REF)      /* dest @, src @ */ \
+	X(LOAD_32)  /* dest @, src @ */ \
+	X(LOAD_64)  /* dest @, src @ */ \
+	X(LOAD_N)   /* dest @, src @, size u32 */ \
+	X(STORE_32) /* dest @, src @ */ \
+	X(STORE_64) /* dest @, src @ */ \
+	X(STORE_N)  /* dest @, src @, size u32 */ \
 	/* */ \
 	X(CALL)          /* stack-bump @, jump_target u32 */ \
 	X(RETURN)        /* */ \
@@ -169,6 +176,30 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_LE_I64:
 		fprintf(stderr, "LE_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
+
+	case LOL_REF:
+		fprintf(stderr, "REF @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
+
+	case LOL_LOAD_32:
+		fprintf(stderr, "LOAD_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
+	case LOL_LOAD_64:
+		fprintf(stderr, "LOAD_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
+	case LOL_LOAD_N:
+		fprintf(stderr, "LOAD_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		return 8;
+
+	case LOL_STORE_32:
+		fprintf(stderr, "STORE_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
+	case LOL_STORE_64:
+		fprintf(stderr, "STORE_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
+	case LOL_STORE_N:
+		fprintf(stderr, "STORE_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		return 8;
 
 	case LOL_CALL:
 		fprintf(stderr, "CALL @%i, %u\n", OP_OFFSET(0), OP_U32(2));

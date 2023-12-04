@@ -104,7 +104,19 @@ grammar Lol {
 	}
 
 	rule locator {
-		<identifier> ("'s" <locator>)?
+		<identifier> <locator-suffix>*
+	}
+
+	rule locator-suffix {
+		<locator-dereference> | <locator-member>
+	}
+
+	rule locator-dereference {
+		'*'
+	}
+
+	rule locator-member {
+		"'s" <identifier>
 	}
 
 	rule type {
@@ -147,6 +159,13 @@ enum LolOp <
 	LE_U8
 	LE_I32
 	LE_I64
+	REF
+	LOAD_32
+	LOAD_64
+	LOAD_N
+	STORE_32
+	STORE_64
+	STORE_N
 
 	CALL
 	RETURN
@@ -161,7 +180,7 @@ enum LolOp <
 
 class Type {
 	has Int $.size;
-	has Str $.desc;
+	has Str $.name;
 }
 
 class PrimitiveType is Type {
@@ -176,20 +195,32 @@ class StructType is Type {
 	has StructField %.fields;
 }
 
+class PointerType is Type {
+	has Type $.pointee;
+}
+
+class Location {
+	has Type $.type is rw;
+}
+
+class LocalLocation is Location {
+	has Int $.index;
+	has Bool $.temp is rw;
+}
+
+class DereferenceLocation is Location {
+	has LocalLocation $.local;
+	has Bool $.dereference-in-place;
+}
+
 class FuncParam {
 	has Type $.type;
 	has Str $.name;
 }
 
-class LocalVar {
-	has Int $.index;
-	has Type $.type;
-	has Bool $.temp;
-}
-
 class FuncDecl {
 	has Str $.name;
-	has LocalVar $.return-var;
+	has LocalLocation $.return-var;
 	has FuncParam @.params;
 	has $.body;
 
@@ -197,27 +228,27 @@ class FuncDecl {
 }
 
 my %builtin-types = %(
-	void => PrimitiveType.new(size => 0, desc => "void"),
-	bool => PrimitiveType.new(size => 1, desc => "bool"),
-	int => PrimitiveType.new(size => 4, desc => "int"),
-	long => PrimitiveType.new(size => 8, desc => "long"),
+	void => PrimitiveType.new(size => 0, name => "void"),
+	bool => PrimitiveType.new(size => 1, name => "bool"),
+	int => PrimitiveType.new(size => 4, name => "int"),
+	long => PrimitiveType.new(size => 8, name => "long"),
 );
 
 class StackFrame {
 	has FuncDecl $.func;
-	has LocalVar %.vars is rw;
-	has LocalVar @.temps is rw;
+	has LocalLocation %.vars is rw;
+	has LocalLocation @.temps is rw;
 	has Int $.idx is rw = 0;
 
-	method has-temps() {
+	method has-temps() returns Bool {
 		@.temps.Bool;
 	}
 
-	method has(Str $name) {
+	method has(Str $name) returns Bool {
 		%.vars{$name}:exists;
 	}
 
-	method get(Str $name)  {
+	method get(Str $name) returns LocalLocation {
 		if not %.vars{$name}:exists {
 			die "Variable doesn't exist: $name";
 		}
@@ -225,17 +256,16 @@ class StackFrame {
 		%.vars{$name};
 	}
 
-	method define(Str $name, LocalVar $var) {
+	method define(Str $name, LocalLocation $var) {
 		if %.vars{$name}:exists {
 			die "Variable already exists: $name";
 		}
 
 		%.vars{$name} = $var;
-		$var;
 	}
 
-	method push-temp($type) {
-		my $var = LocalVar.new(
+	method push-temp(Type $type) {
+		my $var = LocalLocation.new(
 			index => $.idx,
 			type => $type,
 			temp => True,
@@ -245,7 +275,7 @@ class StackFrame {
 		$var;
 	}
 
-	method pop-if-temp($var) {
+	method pop-if-temp(LocalLocation $var) {
 		if $var.temp {
 			my $popped-var = @.temps.pop();
 			if not ($var === $popped-var) {
@@ -290,11 +320,30 @@ class Program {
 
 	method type-from-cst($type-cst) returns Type {
 		my $name = $type-cst<identifier>.Str;
-		if not %.types{$name}:exists {
-			die "Unknown type: $name";
-		}
 
-		$.types{$name};
+		if $name eq "ptr" {
+			if not $type-cst[0] or +$type-cst[0]<type> != 1 {
+				die "'ptr' requires 1 type parameter";
+			}
+
+			my $pointee = $.type-from-cst($type-cst[0]<type>[0]);
+			my $name = "ptr[{$pointee.name}]";
+			if %.types{$name}:exists {
+				%.types{$name}
+			} else {
+				my $type = PointerType.new(
+					pointee => $pointee,
+					size => 8,
+					name => $name,
+				);
+				%.types{$name} = $type;
+				$type;
+			}
+		} elsif %.types{$name}:exists {
+			%.types{$name};
+		} else {
+			die "Unknown type: '$name'"
+		}
 	}
 
 	method analyze-struct-decl($struct-decl) {
@@ -323,7 +372,7 @@ class Program {
 		%.types{$name} = StructType.new(
 			fields => %fields,
 			size => $size,
-			desc => "struct $name",
+			name => "struct $name",
 		);
 	}
 
@@ -348,7 +397,7 @@ class Program {
 
 		my $func = FuncDecl.new(
 			name => $name,
-			return-var => LocalVar.new(
+			return-var => LocalLocation.new(
 				index => $return-index,
 				type => $return-type,
 				temp => False,
@@ -374,43 +423,74 @@ class Program {
 
 	method reconcile-types(Type $lhs, Type $rhs) returns Type {
 		if not ($lhs === $rhs) {
-			die "Incompatible types: {$lhs.desc}, {$rhs.desc}"
+			die "Incompatible types: {$lhs.name}, {$rhs.name}"
 		}
 
 		$lhs;
 	}
 
-	method locate-by-locator($frame, $locator-param) returns LocalVar {
+	method locate-by-locator($frame, $locator-param, $out) returns Location {
 		my $locator = $locator-param; # Need locator to be read-writeable
 		my $var = $frame.get($locator<identifier>.Str);
-		my $type = $var.type;
-		my $offset = 0;
 
-		while $locator[0] {
-			$locator = $locator[0]<locator>;
+		my $local-var = Nil;
 
-			if not $type.isa(StructType) {
-				die "Used accessor on non-struct type '{$type.desc}'";
+		for $locator<locator-suffix> -> $suffix {
+			if $suffix<locator-member> {
+				if not $var.type.isa(StructType) {
+					die "Member access requires a struct type, got '{$var.type.name}'";
+				}
+
+				my $name = $suffix<locator-member><identifier>.Str;
+				if not $var.type.fields{$name}:exists {
+					die "Member '$name' doesn't exist in '{$var.type.name}'";
+				}
+
+				my $field = $var.type.fields{$name};
+				$var = LocalLocation.new(
+					type => $field.type,
+					index => $var.index + $field.offset,
+					temp => False,
+				);
+			} elsif $suffix<locator-dereference> {
+				if not $var.type.isa(PointerType) {
+					die "Dereference of non-pointer type '{$var.type.name}'";
+				}
+
+				if $var.isa(DereferenceLocation) {
+					if not $local-var.defined {
+						$local-var = $frame.push-temp($var.type);
+					}
+
+					$out.append(LolOp::LOAD_64);
+					append-i16le($out, $local-var.index);
+					append-i16le($out, $var.local.index);
+					$local-var.type = $var.type;
+					$var = DereferenceLocation.new(
+						local => $local-var,
+						type => $var.type.pointee,
+						dereference-in-place => True,
+					);
+				} elsif $var.isa(LocalLocation) {
+					if not $var.type.isa(PointerType) {
+						die "Dereference of non-pointer type '{$var.type.name}'";
+					}
+
+					$var = DereferenceLocation.new(
+						local => $var,
+						type => $var.type.pointee,
+						dereference-in-place => False,
+					);
+				} else {
+					die "Bad location type";
+				}
 			}
-
-			my $name = $locator<identifier>.Str;
-			if not $type.fields{$name} {
-				die "Type '{$type.desc}' has no member '$name'";
-			}
-
-			my $field = $type.fields{$name};
-			$offset += $field.offset;
-			$type = $field.type;
 		}
 
-		LocalVar.new(
-			index => $var.index + $offset,
-			type => $type,
-			temp => False,
-		)
+		$var;
 	}
 
-	method compile-expr-part($frame, $part, Buf $out) returns LocalVar {
+	method compile-expr-part($frame, $part, Buf $out) returns LocalLocation {
 		if $part<uninitialized> {
 			$frame.push-temp($.type-from-cst($part<uninitialized><type>));
 		} elsif $part<num-literal> {
@@ -485,13 +565,32 @@ class Program {
 
 			$return-val;
 		} elsif $part<locator> {
-			$.locate-by-locator($frame, $part<locator>);
+			my $var = $.locate-by-locator($frame, $part<locator>, $out);
+			if $var.isa(LocalLocation) {
+				$var;
+			} elsif $var.isa(DereferenceLocation) {
+				my $local = $var.local;
+				if $var.dereference-in-place {
+					$.generate-load($local.index, $local.index, $var.type.size, $out);
+					my $size-diff = $var.type.size - $local.type.size;
+
+					$local.type = $var.type;
+					$frame.idx += $size-diff;
+					$local;
+				} else {
+					my $temp = $frame.push-temp($var.type);
+					$.generate-load($temp.index, $local.index, $temp.type.size, $out);
+					$temp;
+				}
+			} else {
+				die "Bad location";
+			}
 		} else {
 			die "Bad expression '$part'";
 		}
 	}
 
-	method compile-expr-part-to-loc($frame, LocalVar $dest, $part, Buf $out) {
+	method compile-expr-part-to-loc($frame, LocalLocation $dest, $part, Buf $out) {
 		if $part<uninitialized> {
 			my $type = $.type-from-cst($part<uninitialized><type>);
 			$.reconcile-types($dest.type, $type);
@@ -525,7 +624,7 @@ class Program {
 		}
 	}
 
-	method compile-expr($frame, $expr, Buf $out) returns LocalVar {
+	method compile-expr($frame, $expr, Buf $out) returns LocalLocation {
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
 			my $lhs = $expr<bin-op><expression-part>;
@@ -548,7 +647,7 @@ class Program {
 		}
 	}
 
-	method compile-expr-to-loc($frame, LocalVar $dest, $expr, Buf $out) {
+	method compile-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out) {
 		if $expr<bin-op> {
 			my $lhs = $expr<bin-op><expression-part>;
 			my $rhs = $expr<bin-op><expression>;
@@ -617,7 +716,7 @@ class Program {
 					die "Bad operator: '$operator'";
 				}
 			} else {
-				die "Bad type: '{$dest.type.desc}'";
+				die "Bad type: '{$dest.type.name}'";
 			}
 
 			append-i16le($out, $dest.index);
@@ -658,6 +757,40 @@ class Program {
 		}
 	}
 
+	method generate-load(Int $dest, Int $src, Int $size, Buf $out) {
+		if $size == 4 {
+			$out.append(LolOp::LOAD_32);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+		} elsif $size == 8 {
+			$out.append(LolOp::LOAD_64);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+		} else {
+			$out.append(LolOp::LOAD_N);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+			append-u32le($out, $size);
+		}
+	}
+
+	method generate-store(Int $dest, Int $src, Int $size, Buf $out) {
+		if $size == 4 {
+			$out.append(LolOp::STORE_32);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+		} elsif $size == 8 {
+			$out.append(LolOp::STORE_64);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+		} else {
+			$out.append(LolOp::STORE_N);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+			append-u32le($out, $size);
+		}
+	}
+
 	method compile-statm($frame, $statm, Buf $out) {
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out);
@@ -667,10 +800,10 @@ class Program {
 				$out.append(LolOp::DBG_PRINT_U8);
 			} elsif $var.type === %builtin-types<int> {
 				$out.append(LolOp::DBG_PRINT_I32);
-			} elsif $var.type === %builtin-types<long> {
+			} elsif $var.type === %builtin-types<long> or $var.type.isa(PointerType) {
 				$out.append(LolOp::DBG_PRINT_I64);
 			} else {
-				die "Type incompatible with dbg-print: '{$var.type.desc}'";
+				die "Type incompatible with dbg-print: '{$var.type.name}'";
 			}
 
 			append-i16le($out, $var.index);
@@ -738,6 +871,7 @@ class Program {
 				}
 
 				$frame.temps.pop();
+				$var.temp = False;
 				$frame.define($name, $var);
 				$var;
 			}
@@ -768,7 +902,7 @@ class Program {
 		}
 
 		for $func.params -> $param {
-			$frame.vars{$param.name} = LocalVar.new(
+			$frame.vars{$param.name} = LocalLocation.new(
 				index => $params-index,
 				type => $param.type,
 				temp => False,
