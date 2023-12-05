@@ -8,11 +8,14 @@
 	X(SETI_8)  /* dest @, imm x32 */ \
 	X(SETI_32) /* dest @, imm x32 */ \
 	X(SETI_64) /* dest @, imm x64 */ \
+	X(COPY_8)  /* dest @, src @ */ \
 	X(COPY_32) /* dest @, src @ */ \
 	X(COPY_64) /* dest @, src @ */ \
 	X(COPY_N)  /* dest @, src @, size u32 */ \
+	X(ADD_8)   /* dest @, a @, b @ */ \
 	X(ADD_32)  /* dest @, a @, b @ */ \
 	X(ADD_64)  /* dest @, a @, b @ */ \
+	X(ADDI_8)  /* dest @, a @, imm b x32 */ \
 	X(ADDI_32) /* dest @, a @, imm b x32 */ \
 	X(ADDI_64) /* dest @, a @, imm b x64 */ \
 	X(EQ_8)    /* dest @, a @, b @ */ \
@@ -28,9 +31,11 @@
 	X(LE_I32)   /* dest @, a @, b @ */ \
 	X(LE_I64)   /* dest @, a @, b @ */ \
 	X(REF)      /* dest @, src @ */ \
+	X(LOAD_8)   /* dest @, src @ */ \
 	X(LOAD_32)  /* dest @, src @ */ \
 	X(LOAD_64)  /* dest @, src @ */ \
 	X(LOAD_N)   /* dest @, src @, size u32 */ \
+	X(STORE_8)  /* dest @, src @ */ \
 	X(STORE_32) /* dest @, src @ */ \
 	X(STORE_64) /* dest @, src @ */ \
 	X(STORE_N)  /* dest @, src @, size u32 */ \
@@ -113,6 +118,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 		fprintf(stderr, "SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
 		return 10;
 
+	case LOL_COPY_8:
+		fprintf(stderr, "COPY_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
 	case LOL_COPY_32:
 		fprintf(stderr, "COPY_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
@@ -123,6 +131,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 		fprintf(stderr, "COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
+	case LOL_ADD_8:
+		fprintf(stderr, "ADD_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
 	case LOL_ADD_32:
 		fprintf(stderr, "ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
@@ -130,6 +141,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 		fprintf(stderr, "ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
+	case LOL_ADDI_8:
+		fprintf(stderr, "ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U8(4));
+		return 5;
 	case LOL_ADDI_32:
 		fprintf(stderr, "ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
@@ -181,6 +195,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 		fprintf(stderr, "REF @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 
+	case LOL_LOAD_8:
+		fprintf(stderr, "LOAD_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
 	case LOL_LOAD_32:
 		fprintf(stderr, "LOAD_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
@@ -191,6 +208,9 @@ size_t pretty_print_instruction(unsigned char *instr)
 		fprintf(stderr, "LOAD_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
+	case LOL_STORE_8:
+		fprintf(stderr, "STORE_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		return 4;
 	case LOL_STORE_32:
 		fprintf(stderr, "STORE_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;

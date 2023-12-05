@@ -137,7 +137,15 @@ grammar Lol {
 	}
 
 	token num-literal {
-		\d+ ('.' \d+)?
+		<num-literal-body> <num-literal-suffix>?
+	}
+
+	token num-literal-body {
+		'-'? \d+ ('.' \d+)?
+	}
+
+	token num-literal-suffix {
+		'b' | 'i' | 'l'
 	}
 
 	token bool-literal {
@@ -153,11 +161,14 @@ enum LolOp <
 	SETI_8
 	SETI_32
 	SETI_64
+	COPY_8
 	COPY_32
 	COPY_64
 	COPY_N
+	ADD_8
 	ADD_32
 	ADD_64
+	ADDI_8
 	ADDI_32
 	ADDI_64
 	EQ_8
@@ -173,9 +184,11 @@ enum LolOp <
 	LE_I32
 	LE_I64
 	REF
+	LOAD_8
 	LOAD_32
 	LOAD_64
 	LOAD_N
+	STORE_8
 	STORE_32
 	STORE_64
 	STORE_N
@@ -244,6 +257,7 @@ class FuncDecl {
 my %builtin-types = %(
 	void => PrimitiveType.new(size => 0, name => "void"),
 	bool => PrimitiveType.new(size => 1, name => "bool"),
+	byte => PrimitiveType.new(size => 1, name => "byte"),
 	int => PrimitiveType.new(size => 4, name => "int"),
 	long => PrimitiveType.new(size => 8, name => "long"),
 );
@@ -612,11 +626,36 @@ class Program {
 		if $part<uninitialized> {
 			$frame.push-temp($.type-from-cst($part<uninitialized><type>));
 		} elsif $part<num-literal> {
-			my $temp = $frame.push-temp(%builtin-types<int>);
-			$out.append(LolOp::SETI_32);
-			append-i16le($out, $temp.index);
-			append-i32le($out, +$part<num-literal>.Str);
-			$temp;
+			my $body = $part<num-literal><num-literal-body>.Str;
+
+			my $suffix;
+			if $part<num-literal><num-literal-suffix> {
+				$suffix = $part<num-literal><num-literal-suffix>.Str;
+			} else {
+				$suffix = "i";
+			}
+
+			my $var;
+			if $suffix eq "b" {
+				$var = $frame.push-temp(%builtin-types<byte>);
+				$out.append(LolOp::SETI_8);
+				append-i16le($out, $var.index);
+				$out.append(+$body);
+			} elsif $suffix eq "i" {
+				$var = $frame.push-temp(%builtin-types<int>);
+				$out.append(LolOp::SETI_32);
+				append-i16le($out, $var.index);
+				append-i32le($out, +$body);
+			} elsif $suffix eq "l" {
+				$var = $frame.push-temp(%builtin-types<long>);
+				$out.append(LolOp::SETI_64);
+				append-i16le($out, $var.index);
+				append-i64le($out, +$body);
+			} else {
+				die "Bad number literal suffix '$suffix'"
+			}
+
+			$var;
 		} elsif $part<bool-literal> {
 			my $temp = $frame.push-temp(%builtin-types<bool>);
 			$out.append(LolOp::SETI_8);
@@ -780,6 +819,33 @@ class Program {
 			} else {
 				die "Bad operator: '$operator'";
 			}
+		} elsif $src-type === %builtin-types<byte> {
+			if $operator eq "+" {
+				$dest-type = %builtin-types<byte>;
+				$out.append(LolOp::ADD_8);
+			} elsif $operator eq "==" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::EQ_8);
+			} elsif $operator eq "!=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::NEQ_8);
+			} elsif $operator eq "<" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_U8);
+			} elsif $operator eq "<=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_U8);
+			} elsif $operator eq ">" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_U8);
+				$swap-opers = True;
+			} elsif $operator eq ">=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_U8);
+				$swap-opers = True;
+			} else {
+				die "Bad operator: '$operator'";
+			}
 		} elsif $src-type === %builtin-types<int> {
 			if $operator eq "+" {
 				$dest-type = %builtin-types<int>;
@@ -851,6 +917,10 @@ class Program {
 	}
 
 	method compile-expr($frame, $expr, Buf $out) returns LocalLocation {
+		CATCH {
+			die "{.Str}\n  in expr: ({$expr.Str})";
+		}
+
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
 			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out);
@@ -901,8 +971,12 @@ class Program {
 	}
 
 	method generate-copy(Int $dest, Int $src, Int $size, Buf $out) {
-		if $size == 4 {
+		if $size == 1 {
 			$out.append(LolOp::COPY_32);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+		} elsif $size == 4 {
+			$out.append(LolOp::COPY_8);
 			append-i16le($out, $dest);
 			append-i16le($out, $src);
 		} elsif $size == 8 {
@@ -918,7 +992,11 @@ class Program {
 	}
 
 	method generate-load(Int $dest, Int $src, Int $size, Buf $out) {
-		if $size == 4 {
+		if $size == 1 {
+			$out.append(LolOp::LOAD_8);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+		} elsif $size == 4 {
 			$out.append(LolOp::LOAD_32);
 			append-i16le($out, $dest);
 			append-i16le($out, $src);
@@ -935,7 +1013,11 @@ class Program {
 	}
 
 	method generate-store(Int $dest, Int $src, Int $size, Buf $out) {
-		if $size == 4 {
+		if $size == 1 {
+			$out.append(LolOp::STORE_8);
+			append-i16le($out, $dest);
+			append-i16le($out, $src);
+		} elsif $size == 4 {
 			$out.append(LolOp::STORE_32);
 			append-i16le($out, $dest);
 			append-i16le($out, $src);
@@ -952,6 +1034,10 @@ class Program {
 	}
 
 	method compile-statm($frame, $statm, Buf $out) {
+		CATCH {
+			die "{.Str}\n  in statm: {$statm.Str}\n";
+		}
+
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out);
 		} elsif $statm<dbg-print-statm> {
