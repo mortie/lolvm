@@ -116,7 +116,7 @@ grammar Lol {
 	}
 
 	rule locator-member {
-		"'s" <identifier>
+		("'s" | '.') <identifier>
 	}
 
 	rule locator-reference {
