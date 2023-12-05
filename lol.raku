@@ -145,7 +145,7 @@ grammar Lol {
 	}
 
 	token num-literal-suffix {
-		'b' | 'i' | 'l'
+		'b' | 'i' | 'l' | 'f' | 'd'
 	}
 
 	token bool-literal {
@@ -168,21 +168,31 @@ enum LolOp <
 	ADD_8
 	ADD_32
 	ADD_64
+	ADD_F32
+	ADD_F64
 	ADDI_8
 	ADDI_32
 	ADDI_64
 	EQ_8
 	EQ_32
 	EQ_64
+	EQ_F32
+	EQ_F64
 	NEQ_8
 	NEQ_32
 	NEQ_64
+	NEQ_F32
+	NEQ_F64
 	LT_U8
 	LT_I32
 	LT_I64
+	LT_F32
+	LT_F64
 	LE_U8
 	LE_I32
 	LE_I64
+	LE_F32
+	LE_F64
 	REF
 	LOAD_8
 	LOAD_32
@@ -201,6 +211,8 @@ enum LolOp <
 	DBG_PRINT_U8
 	DBG_PRINT_I32
 	DBG_PRINT_I64
+	DBG_PRINT_F32
+	DBG_PRINT_F64
 	HALT
 >;
 
@@ -260,6 +272,8 @@ my %builtin-types = %(
 	byte => PrimitiveType.new(size => 1, name => "byte"),
 	int => PrimitiveType.new(size => 4, name => "int"),
 	long => PrimitiveType.new(size => 8, name => "long"),
+	float => PrimitiveType.new(size => 4, name => "float"),
+	double => PrimitiveType.new(size => 8, name => "double"),
 );
 
 class StackFrame {
@@ -344,6 +358,14 @@ sub append-u64le(Buf $buf, uint64 $value) {
 
 sub append-i64le(Buf $buf, int64 $value) {
 	$buf.write-int64(+$buf, $value, LittleEndian);
+}
+
+sub append-num32le(Buf $buf, num32 $value) {
+	$buf.write-num32(+$buf, $value, LittleEndian);
+}
+
+sub append-num64le(Buf $buf, num64 $value) {
+	$buf.write-num64(+$buf, $value, LittleEndian);
 }
 
 class FuncCallFixup {
@@ -631,6 +653,8 @@ class Program {
 			my $suffix;
 			if $part<num-literal><num-literal-suffix> {
 				$suffix = $part<num-literal><num-literal-suffix>.Str;
+			} elsif $body.contains(".") {
+				$suffix = "d";
 			} else {
 				$suffix = "i";
 			}
@@ -651,6 +675,16 @@ class Program {
 				$out.append(LolOp::SETI_64);
 				append-i16le($out, $var.index);
 				append-i64le($out, +$body);
+			} elsif $suffix eq "f" {
+				$var = $frame.push-temp(%builtin-types<float>);
+				$out.append(LolOp::SETI_32);
+				append-i16le($out, $var.index);
+				append-num32le($out, (+$body).Num);
+			} elsif $suffix eq "d" {
+				$var = $frame.push-temp(%builtin-types<double>);
+				$out.append(LolOp::SETI_64);
+				append-i16le($out, $var.index);
+				append-num64le($out, (+$body).Num);
 			} else {
 				die "Bad number literal suffix '$suffix'"
 			}
@@ -900,8 +934,62 @@ class Program {
 			} else {
 				die "Bad operator: '$operator'";
 			}
+		} elsif $src-type === %builtin-types<float> {
+			if $operator eq "+" {
+				$dest-type = %builtin-types<float>;
+				$out.append(LolOp::ADD_F32);
+			} elsif $operator eq "==" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::EQ_F32);
+			} elsif $operator eq "!=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::NEQ_F32);
+			} elsif $operator eq "<" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_F32);
+			} elsif $operator eq "<=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_F32);
+			} elsif $operator eq ">" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_F32);
+				$swap-opers = True;
+			} elsif $operator eq ">=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_F32);
+				$swap-opers = True;
+			} else {
+				die "Bad operator: '$operator'";
+			}
+		} elsif $src-type === %builtin-types<double> {
+			if $operator eq "+" {
+				$dest-type = %builtin-types<double>;
+				$out.append(LolOp::ADD_F64);
+			} elsif $operator eq "==" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::EQ_F64);
+			} elsif $operator eq "!=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::NEQ_F64);
+			} elsif $operator eq "<" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_F64);
+			} elsif $operator eq "<=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_F64);
+			} elsif $operator eq ">" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_F64);
+				$swap-opers = True;
+			} elsif $operator eq ">=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_F64);
+				$swap-opers = True;
+			} else {
+				die "Bad operator: '$operator'";
+			}
 		} else {
-			die "Bad type: '{$dest.type.name}'";
+			die "Bad type: '{$src-type.name}'";
 		}
 
 		append-i16le($out, $dest);
@@ -1048,6 +1136,10 @@ class Program {
 				$out.append(LolOp::DBG_PRINT_I32);
 			} elsif $var.type === %builtin-types<long> or $var.type.isa(PointerType) {
 				$out.append(LolOp::DBG_PRINT_I64);
+			} elsif $var.type === %builtin-types<float> {
+				$out.append(LolOp::DBG_PRINT_F32);
+			} elsif $var.type === %builtin-types<double> {
+				$out.append(LolOp::DBG_PRINT_F64);
 			} else {
 				die "Type incompatible with dbg-print: '{$var.type.name}'";
 			}

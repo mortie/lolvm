@@ -47,6 +47,22 @@ X(ADD_64, 6, {
 	a += b;
 	memcpy(STACK(OP_OFFSET(0)), &a, 8);
 })
+X(ADD_F32, 6, {
+	float a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 4);
+	float b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 4);
+	a += b;
+	memcpy(STACK(OP_OFFSET(0)), &a, 4);
+})
+X(ADD_F64, 6, {
+	double a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 8);
+	double b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 8);
+	a += b;
+	memcpy(STACK(OP_OFFSET(0)), &a, 8);
+})
 
 X(ADDI_8, 5, {
 	*STACK(OP_OFFSET(0)) = *STACK(OP_OFFSET(2)) + OP_U8(4);
@@ -83,6 +99,20 @@ X(EQ_64, 6, {
 	memcpy(&b, STACK(OP_OFFSET(4)), 8);
 	*STACK(OP_OFFSET(0)) = a == b;
 })
+X(EQ_F32, 6, {
+	float a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 4);
+	float b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 4);
+	*STACK(OP_OFFSET(0)) = a == b;
+})
+X(EQ_F64, 6, {
+	double a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 8);
+	double b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 8);
+	*STACK(OP_OFFSET(0)) = a == b;
+})
 
 X(NEQ_8, 6, {
 	*STACK(OP_OFFSET(0)) = *STACK(OP_OFFSET(2)) != *STACK(OP_OFFSET(4));
@@ -98,6 +128,20 @@ X(NEQ_64, 6, {
 	uint64_t a;
 	memcpy(&a, STACK(OP_OFFSET(2)), 8);
 	uint64_t b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 8);
+	*STACK(OP_OFFSET(0)) = a != b;
+})
+X(NEQ_F32, 6, {
+	float a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 4);
+	float b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 4);
+	*STACK(OP_OFFSET(0)) = a != b;
+})
+X(NEQ_F64, 6, {
+	double a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 8);
+	double b;
 	memcpy(&b, STACK(OP_OFFSET(4)), 8);
 	*STACK(OP_OFFSET(0)) = a != b;
 })
@@ -119,6 +163,20 @@ X(LT_I64, 6, {
 	memcpy(&b, STACK(OP_OFFSET(4)), 8);
 	*STACK(OP_OFFSET(0)) = a < b;
 })
+X(LT_F32, 6, {
+	float a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 4);
+	float b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 4);
+	*STACK(OP_OFFSET(0)) = a < b;
+})
+X(LT_F64, 6, {
+	double a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 8);
+	double b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 8);
+	*STACK(OP_OFFSET(0)) = a < b;
+})
 
 X(LE_U8, 6, {
 	*STACK(OP_OFFSET(0)) = *STACK(OP_OFFSET(2)) <= *STACK(OP_OFFSET(4));
@@ -134,6 +192,20 @@ X(LE_I64, 6, {
 	int64_t a;
 	memcpy(&a, STACK(OP_OFFSET(2)), 8);
 	int64_t b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 8);
+	*STACK(OP_OFFSET(0)) = a <= b;
+})
+X(LE_F32, 6, {
+	float a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 4);
+	float b;
+	memcpy(&b, STACK(OP_OFFSET(4)), 4);
+	*STACK(OP_OFFSET(0)) = a <= b;
+})
+X(LE_F64, 6, {
+	double a;
+	memcpy(&a, STACK(OP_OFFSET(2)), 8);
+	double b;
 	memcpy(&b, STACK(OP_OFFSET(4)), 8);
 	*STACK(OP_OFFSET(0)) = a <= b;
 })

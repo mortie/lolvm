@@ -15,21 +15,31 @@
 	X(ADD_8)   /* dest @, a @, b @ */ \
 	X(ADD_32)  /* dest @, a @, b @ */ \
 	X(ADD_64)  /* dest @, a @, b @ */ \
+	X(ADD_F32) /* dest @, a @, b @ */ \
+	X(ADD_F64) /* dest @, a @, b @ */ \
 	X(ADDI_8)  /* dest @, a @, imm b x32 */ \
 	X(ADDI_32) /* dest @, a @, imm b x32 */ \
 	X(ADDI_64) /* dest @, a @, imm b x64 */ \
 	X(EQ_8)    /* dest @, a @, b @ */ \
 	X(EQ_32)   /* dest @, a @, b @ */ \
 	X(EQ_64)   /* dest @, a @, b @ */ \
+	X(EQ_F32)  /* dest @, a @, b @ */ \
+	X(EQ_F64)  /* dest @, a @, b @ */ \
 	X(NEQ_8)    /* dest @, a @, b @ */ \
 	X(NEQ_32)   /* dest @, a @, b @ */ \
 	X(NEQ_64)   /* dest @, a @, b @ */ \
+	X(NEQ_F32)  /* dest @, a @, b @ */ \
+	X(NEQ_F64)  /* dest @, a @, b @ */ \
 	X(LT_U8)    /* dest @, a @, b @ */ \
 	X(LT_I32)   /* dest @, a @, b @ */ \
 	X(LT_I64)   /* dest @, a @, b @ */ \
+	X(LT_F32)   /* dest @, a @, b @ */ \
+	X(LT_F64)   /* dest @, a @, b @ */ \
 	X(LE_U8)    /* dest @, a @, b @ */ \
 	X(LE_I32)   /* dest @, a @, b @ */ \
 	X(LE_I64)   /* dest @, a @, b @ */ \
+	X(LE_F32)   /* dest @, a @, b @ */ \
+	X(LE_F64)   /* dest @, a @, b @ */ \
 	X(REF)      /* dest @, src @ */ \
 	X(LOAD_8)   /* dest @, src @ */ \
 	X(LOAD_32)  /* dest @, src @ */ \
@@ -48,6 +58,8 @@
 	X(DBG_PRINT_U8) /* val @ */ \
 	X(DBG_PRINT_I32) /* val @ */ \
 	X(DBG_PRINT_I64) /* val @ */ \
+	X(DBG_PRINT_F32) /* val @ */ \
+	X(DBG_PRINT_F64) /* val @ */ \
 	X(HALT)          /* */ \
 //
 
@@ -140,6 +152,12 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_ADD_64:
 		fprintf(stderr, "ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
+	case LOL_ADD_F32:
+		fprintf(stderr, "ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_ADD_F64:
+		fprintf(stderr, "ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
 
 	case LOL_ADDI_8:
 		fprintf(stderr, "ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U8(4));
@@ -160,6 +178,12 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_EQ_64:
 		fprintf(stderr, "EQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
+	case LOL_EQ_F32:
+		fprintf(stderr, "EQ_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_EQ_F64:
+		fprintf(stderr, "EQ_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
 
 	case LOL_NEQ_8:
 		fprintf(stderr, "NEQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
@@ -169,6 +193,12 @@ size_t pretty_print_instruction(unsigned char *instr)
 		return 6;
 	case LOL_NEQ_64:
 		fprintf(stderr, "NEQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_NEQ_F32:
+		fprintf(stderr, "NEQ_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_NEQ_F64:
+		fprintf(stderr, "NEQ_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_LT_U8:
@@ -180,6 +210,12 @@ size_t pretty_print_instruction(unsigned char *instr)
 	case LOL_LT_I64:
 		fprintf(stderr, "LT_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
+	case LOL_LT_F32:
+		fprintf(stderr, "LT_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_LT_F64:
+		fprintf(stderr, "LT_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
 
 	case LOL_LE_U8:
 		fprintf(stderr, "LE_U8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
@@ -189,6 +225,12 @@ size_t pretty_print_instruction(unsigned char *instr)
 		return 6;
 	case LOL_LE_I64:
 		fprintf(stderr, "LE_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_LE_F32:
+		fprintf(stderr, "LE_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		return 6;
+	case LOL_LE_F64:
+		fprintf(stderr, "LE_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_REF:
@@ -245,6 +287,12 @@ size_t pretty_print_instruction(unsigned char *instr)
 		fprintf(stderr, "DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
 		return 2;
 	case LOL_DBG_PRINT_I64:
+		fprintf(stderr, "DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
+		return 2;
+	case LOL_DBG_PRINT_F32:
+		fprintf(stderr, "DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
+		return 2;
+	case LOL_DBG_PRINT_F64:
 		fprintf(stderr, "DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
 		return 2;
 
@@ -322,7 +370,6 @@ void lolvm_step(struct lolvm *vm)
 		vm->sptr += OP_OFFSET(0);
 		vm->iptr = OP_U32(2);
 		break;
-
 	case LOL_RETURN:
 		vm->cptr -= 1;
 		vm->sptr = vm->callstack[vm->cptr].sptr;
@@ -332,7 +379,6 @@ void lolvm_step(struct lolvm *vm)
 	case LOL_BRANCH:
 		vm->iptr += OP_OFFSET(0) - 1;
 		break;
-
 	case LOL_BRANCH_Z:
 		if (*STACK(OP_OFFSET(0)) == 0) {
 			vm->iptr += OP_OFFSET(2) - 1;
@@ -340,7 +386,6 @@ void lolvm_step(struct lolvm *vm)
 			vm->iptr += 4;
 		}
 		break;
-
 	case LOL_BRANCH_NZ:
 		if (*STACK(OP_OFFSET(0)) != 0) {
 			vm->iptr += OP_OFFSET(2) - 1;
@@ -355,7 +400,6 @@ void lolvm_step(struct lolvm *vm)
 		vm->iptr += 2;
 		break;
 	}
-
 	case LOL_DBG_PRINT_I32: {
 		int32_t val;
 		memcpy(&val, STACK(OP_OFFSET(0)), 4);
@@ -363,11 +407,24 @@ void lolvm_step(struct lolvm *vm)
 		vm->iptr += 2;
 		break;
 	}
-
 	case LOL_DBG_PRINT_I64: {
 		int64_t val;
 		memcpy(&val, STACK(OP_OFFSET(0)), 8);
 		printf("DBG PRINT @%" PRIi16 ": %" PRIi64 "\n", OP_OFFSET(0), val);
+		vm->iptr += 2;
+		break;
+	}
+	case LOL_DBG_PRINT_F32: {
+		float val;
+		memcpy(&val, STACK(OP_OFFSET(0)), 4);
+		printf("DBG PRINT @%" PRIi16 ": %g\n", OP_OFFSET(0), val);
+		vm->iptr += 2;
+		break;
+	}
+	case LOL_DBG_PRINT_F64: {
+		double val;
+		memcpy(&val, STACK(OP_OFFSET(0)), 8);
+		printf("DBG PRINT @%" PRIi16 ": %g\n", OP_OFFSET(0), val);
 		vm->iptr += 2;
 		break;
 	}
