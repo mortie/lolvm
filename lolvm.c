@@ -5,26 +5,26 @@
 #include <inttypes.h>
 
 #define LOLVM_OPS \
-	X(SETI_8)  /* dest @, imm x32 */ \
-	X(SETI_32) /* dest @, imm x32 */ \
-	X(SETI_64) /* dest @, imm x64 */ \
-	X(COPY_8)  /* dest @, src @ */ \
-	X(COPY_32) /* dest @, src @ */ \
-	X(COPY_64) /* dest @, src @ */ \
-	X(COPY_N)  /* dest @, src @, size u32 */ \
-	X(ADD_8)   /* dest @, a @, b @ */ \
-	X(ADD_32)  /* dest @, a @, b @ */ \
-	X(ADD_64)  /* dest @, a @, b @ */ \
-	X(ADD_F32) /* dest @, a @, b @ */ \
-	X(ADD_F64) /* dest @, a @, b @ */ \
-	X(ADDI_8)  /* dest @, a @, imm b x32 */ \
-	X(ADDI_32) /* dest @, a @, imm b x32 */ \
-	X(ADDI_64) /* dest @, a @, imm b x64 */ \
-	X(EQ_8)    /* dest @, a @, b @ */ \
-	X(EQ_32)   /* dest @, a @, b @ */ \
-	X(EQ_64)   /* dest @, a @, b @ */ \
-	X(EQ_F32)  /* dest @, a @, b @ */ \
-	X(EQ_F64)  /* dest @, a @, b @ */ \
+	X(SETI_8)   /* dest @, imm x32 */ \
+	X(SETI_32)  /* dest @, imm x32 */ \
+	X(SETI_64)  /* dest @, imm x64 */ \
+	X(COPY_8)   /* dest @, src @ */ \
+	X(COPY_32)  /* dest @, src @ */ \
+	X(COPY_64)  /* dest @, src @ */ \
+	X(COPY_N)   /* dest @, src @, size u32 */ \
+	X(ADD_8)    /* dest @, a @, b @ */ \
+	X(ADD_32)   /* dest @, a @, b @ */ \
+	X(ADD_64)   /* dest @, a @, b @ */ \
+	X(ADD_F32)  /* dest @, a @, b @ */ \
+	X(ADD_F64)  /* dest @, a @, b @ */ \
+	X(ADDI_8)   /* dest @, a @, imm b x32 */ \
+	X(ADDI_32)  /* dest @, a @, imm b x32 */ \
+	X(ADDI_64)  /* dest @, a @, imm b x64 */ \
+	X(EQ_8)     /* dest @, a @, b @ */ \
+	X(EQ_32)    /* dest @, a @, b @ */ \
+	X(EQ_64)    /* dest @, a @, b @ */ \
+	X(EQ_F32)   /* dest @, a @, b @ */ \
+	X(EQ_F64)   /* dest @, a @, b @ */ \
 	X(NEQ_8)    /* dest @, a @, b @ */ \
 	X(NEQ_32)   /* dest @, a @, b @ */ \
 	X(NEQ_64)   /* dest @, a @, b @ */ \
