@@ -468,84 +468,144 @@ class Program {
 	method locate-by-locator($frame, $locator-param, $out) returns Location {
 		my $locator = $locator-param; # Need locator to be read-writeable
 		my $var = $frame.get($locator<identifier>.Str);
+		my @suffixes = $locator<locator-suffix>;
 
-		my $local-var = Nil;
-
-		for $locator<locator-suffix> -> $suffix {
+		# We know that $var is non-temporary here.
+		# That means we can safely create sub-locations into it and everything.
+		# Let's do everything we can do without creating sub-locations.
+		# After this loop, only $var might be changed, and if it is, it's changed to a
+		# a new non-temporary value.
+		my $i = 0;
+		while $i < +@suffixes {
+			my $suffix = @suffixes[$i];
 			if $suffix<locator-member> {
+				$i += 1;
 				if not $var.type.isa(StructType) {
 					die "Member access requires a struct type, got '{$var.type.name}'";
 				}
 
 				my $name = $suffix<locator-member><identifier>.Str;
 				if not $var.type.fields{$name}:exists {
-					die "Member '$name' doesn't exist in '{$var.type.name}'";
+					die "Member '$name' doesn't exist in '{$var.type.name}'"
 				}
 
 				my $field = $var.type.fields{$name};
+				$var = LocalLocation.new(
+					type => $field.type,
+					index => $var.index + $field.offset,
+					temp => False,
+				);
+			} else {
+				last;
+			}
+		}
 
-				if $var.isa(LocalLocation) {
-					$var = LocalLocation.new(
-						type => $field.type,
-						index => $var.index + $field.offset,
-						temp => False,
-					);
-				} elsif $var.isa(DereferenceLocation) {
-					$var.offset += $field.offset;
-					$var.type = $field.type;
-				}
-			} elsif $suffix<locator-dereference> {
+		if $i == +@suffixes {
+			return $var;
+		}
+
+		my $location;
+		while $i < +@suffixes {
+			my $suffix = @suffixes[$i];
+			if $suffix<locator-dereference> and not $location.defined {
+				$i += 1;
 				if not $var.type.isa(PointerType) {
 					die "Dereference of non-pointer type '{$var.type.name}'";
 				}
 
-				if $var.isa(DereferenceLocation) {
-					if not $local-var.defined {
-						$local-var = $frame.push-temp($var.type);
-					} elsif not $local-var.isa(PointerType) {
-						die "Deref of non-pointer type!";
-					}
+				$location = DereferenceLocation.new(
+					type => $var.type.pointee,
+					local => $var,
+					offset => 0,
+					dereference-in-place => False,
+				);
+			} elsif $suffix<locator-dereference> and $location.isa(DereferenceLocation) {
+				$i += 1;
+				if not $location.type.isa(PointerType) {
+					die "Dereference of non-pointer type '{$location.type.name}'";
+				}
 
+				my $location-local;
+				if $location.local.temp {
+					$location-local = $location.local;
+					$frame.change-type($location-local, $location.type);
+				} else {
+					$location-local = $frame.push-temp($location.type);
+				}
+
+				if $location.offset == 0 {
 					$out.append(LolOp::LOAD_64);
-					append-i16le($out, $local-var.index);
-					append-i16le($out, $var.local.index);
-					$local-var.type = $var.type;
-					$var = DereferenceLocation.new(
-						local => $local-var,
-						type => $var.type.pointee,
-						offset => 0,
-						dereference-in-place => True,
-					);
-				} elsif $var.isa(LocalLocation) {
-					if not $var.type.isa(PointerType) {
-						die "Dereference of non-pointer type '{$var.type.name}'";
+					append-i16le($out, $location-local.index);
+					append-i16le($out, $location.local.index);
+				} else {
+					$out.append(LolOp::ADDI_64);
+					append-i16le($out, $location-local.index);
+					append-i16le($out, $location.local.index);
+					append-u64le($out, $location.offset);
+					$out.append(LolOp::LOAD_64);
+					append-i16le($out, $location-local.index);
+					append-i16le($out, $location-local.index);
+				}
+
+				$location = DereferenceLocation.new(
+					type => $location.type.pointee,
+					local => $location-local,
+					offset => 0,
+					dereference-in-place => True,
+				);
+			} elsif $suffix<locator-member> and $location.isa(DereferenceLocation) {
+				$i += 1;
+				if not $location.type.isa(StructType) {
+					die "Member access requires a struct type, got '{$location.type.name}'";
+				}
+
+				my $name = $suffix<locator-member><identifier>.Str;
+				if not $location.type.fields{$name}:exists {
+					die "Member '$name' doesn't exist in '{$location.type.name}'";
+				}
+
+				my $field = $location.type.fields{$name};
+				$location.type = $field.type;
+				$location.offset += $field.offset;
+			} elsif $suffix<locator-reference> and not $location.defined {
+				$i += 1;
+				$location = $frame.push-temp($.get-pointer-type-to($var.type));
+				$out.append(LolOp::REF);
+				append-i16le($out, $location.index);
+				append-i16le($out, $var.index);
+			} elsif $suffix<locator-reference> and $location.isa(DereferenceLocation) {
+				$i += 1;
+				if $location.local.temp {
+					if $location.offset != 0 {
+						$out.append(LolOp::ADDI_64);
+						append-i16le($out, $location.local.index);
+						append-i16le($out, $location.local.index);
+						append-u64le($out, $location.offset);
 					}
 
-					$var = DereferenceLocation.new(
-						local => $var,
-						type => $var.type.pointee,
-						offset => 0,
-						dereference-in-place => False,
-					);
+					$frame.change-type($location.local, $.get-pointer-type-to($location.type));
+					$location = $location.local;
 				} else {
-					die "Bad location type";
+					my $new-location = $frame.push-temp($.get-pointer-type-to($location.type));
+					if $location.offset == 0 {
+						$out.append(LolOp::COPY_64);
+						append-i16le($out, $new-location.index);
+						append-i16le($out, $location.local.index);
+					} else {
+						$out.append(LolOp::ADDI_64);
+						append-i16le($out, $new-location.index);
+						append-i16le($out, $location.local.index);
+						append-u64le($out, $location.offset);
+					}
+
+					$location = $new-location;
 				}
-			} elsif $suffix<locator-reference> {
-				if $var.isa(DereferenceLocation) {
-					$var = $var.local;
-				} elsif $local-var.defined {
-					die "Not supported yet!!"
-				} else {
-					$local-var = $frame.push-temp($.get-pointer-type-to($var.type));
-					$out.append(LolOp::REF);
-					append-i16le($out, $local-var.index);
-					append-i16le($out, $var.index);
-					$var = $local-var;
-				}
+			} else {
+				die "Locator suffix '{$suffix.Str}' not expected at this time";
 			}
 		}
 
-		$var;
+		$location;
 	}
 
 	method compile-expr-part($frame, $part, Buf $out) returns LocalLocation {
@@ -631,9 +691,9 @@ class Program {
 				if $var.dereference-in-place {
 					if $var.offset != 0 {
 						$out.append(LolOp::ADDI_64);
-						append-i16le($local.index);
-						append-i16le($local.index);
-						append-u64le($var.offset);
+						append-i16le($out, $local.index);
+						append-i16le($out, $local.index);
+						append-u64le($out, $var.offset);
 					}
 
 					$.generate-load($local.index, $local.index, $var.type.size, $out);
@@ -911,14 +971,18 @@ class Program {
 		} elsif $statm<dump-statm> {
 			my $dummy-out = Buf.new();
 			my $var = $.compile-expr($frame, $statm<dump-statm><expression>, $dummy-out);
-			say "    Result of expression ({$statm<dump-statm><expression>.Str}):";
+			say "    Dump expression ({$statm<dump-statm><expression>.Str}):";
 			say "      Type: '{$var.type.name}' (size {$var.type.size})";
 			if $var.temp {
 				say "      Index: {$var.index} (temporary)";
 			} else {
 				say "      Index: {$var.index} (non-temporary)";
 			}
-			say "      Codegen size: {+$dummy-out} bytes";
+
+			if +$dummy-out > 0 {
+				say "      Codegen size: {+$dummy-out} bytes";
+			}
+
 			$frame.pop-if-temp($var);
 		} elsif $statm<if-statm> {
 			my $cond-var = $.compile-expr($frame, $statm<if-statm><expression>, $out);
