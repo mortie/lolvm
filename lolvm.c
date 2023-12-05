@@ -422,7 +422,7 @@ int main(int argc, char **argv)
 	}
 
 	if (do_run < 0) {
-		do_run = 0;
+		do_run = 1;
 	}
 
 	if (!path) {

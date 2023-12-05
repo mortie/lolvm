@@ -36,13 +36,22 @@ grammar Lol {
 
 	rule statement {
 		| <block>
+		| <dbg-print-statm>
+		| <dump-statm>
 		| <if-statm>
 		| <while-statm>
-		| <dbg-print-statm>
 		| <return-statm>
 		| <decl-assign-statm>
 		| <assign-statm>
 		| <expression>
+	}
+
+	rule dbg-print-statm {
+		'dbg-print' <expression>
+	}
+
+	rule dump-statm {
+		'dump' <expression>
 	}
 
 	rule if-statm {
@@ -51,10 +60,6 @@ grammar Lol {
 
 	rule while-statm {
 		'while' <expression> <statement>
-	}
-
-	rule dbg-print-statm {
-		'dbg-print' <expression>
 	}
 
 	rule return-statm {
@@ -294,6 +299,16 @@ class StackFrame {
 
 			$.idx -= $var.type.size;
 		}
+	}
+
+	method change-type(LocalLocation $var, Type $new-type) {
+		if not ($var === @.temps.tail) {
+			die "Can't change type of a variable that's not the last on the stack"
+		}
+
+		$var.type = $new-type;
+		my $size-diff = $new-type.size - $var.type.size;
+		$.idx += $size-diff;
 	}
 }
 
@@ -686,22 +701,115 @@ class Program {
 		}
 	}
 
+	# dest can alias lhs or rhs.
+	method compile-bin-op(
+		Int $dest, LocalLocation $lhs, LocalLocation $rhs, Str $operator, Buf $out
+	) returns Type {
+		my $src-type = $.reconcile-types($lhs.type, $rhs.type);
+
+		my $swap-opers = False;
+		my Type $dest-type;
+
+		if $src-type === %builtin-types<bool> {
+			if $operator eq "==" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::EQ_8);
+			} elsif $operator eq "!=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::NEQ_8);
+			} else {
+				die "Bad operator: '$operator'";
+			}
+		} elsif $src-type === %builtin-types<int> {
+			if $operator eq "+" {
+				$dest-type = %builtin-types<int>;
+				$out.append(LolOp::ADD_32);
+			} elsif $operator eq "==" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::EQ_32);
+			} elsif $operator eq "!=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::NEQ_32);
+			} elsif $operator eq "<" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_I32);
+			} elsif $operator eq "<=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_I32);
+			} elsif $operator eq ">" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_I32);
+				$swap-opers = True;
+			} elsif $operator eq ">=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_I32);
+				$swap-opers = True;
+			} else {
+				die "Bad operator: '$operator'";
+			}
+		} elsif $src-type === %builtin-types<long> {
+			if $operator eq "+" {
+				$dest-type = %builtin-types<long>;
+				$out.append(LolOp::ADD_64);
+			} elsif $operator eq "==" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::EQ_64);
+			} elsif $operator eq "!=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::NEQ_64);
+			} elsif $operator eq "<" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_I64);
+			} elsif $operator eq "<=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_I64);
+			} elsif $operator eq ">" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LT_I64);
+				$swap-opers = True;
+			} elsif $operator eq ">=" {
+				$dest-type = %builtin-types<bool>;
+				$out.append(LolOp::LE_I64);
+				$swap-opers = True;
+			} else {
+				die "Bad operator: '$operator'";
+			}
+		} else {
+			die "Bad type: '{$dest.type.name}'";
+		}
+
+		append-i16le($out, $dest);
+		if $swap-opers {
+			append-i16le($out, $rhs.index);
+			append-i16le($out, $lhs.index);
+		} else {
+			append-i16le($out, $lhs.index);
+			append-i16le($out, $rhs.index);
+		}
+
+		$dest-type;
+	}
+
 	method compile-expr($frame, $expr, Buf $out) returns LocalLocation {
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
-			my $lhs = $expr<bin-op><expression-part>;
-			my $rhs = $expr<bin-op><expression>;
-			my $type;
-			if $operator eq any("==", "!=", "<", "<=", ">", ">=") {
-				$type = %builtin-types<bool>;
+			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out);
+			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out);
+			if $lhs.temp {
+				my $type = $.compile-bin-op($lhs.index, $lhs, $rhs, $operator, $out);
+				$frame.pop-if-temp($rhs);
+				$frame.change-type($lhs, $type);
+				$lhs;
+			} elsif $rhs.temp {
+				my $type = $.compile-bin-op($rhs.index, $lhs, $rhs, $operator, $out);
+				$frame.change-type($rhs, $type);
+				$rhs;
 			} else {
-				$type = $.reconcile-types(
-					$.find-expression-part-type($frame, $lhs),
-					$.find-expression-type($frame, $rhs));
+				my $var = $frame.push-temp(%builtin-types<void>);
+				my $type = $.compile-bin-op($rhs.index, $lhs, $rhs, $operator, $out);
+				$frame.change-type($var, $type);
+				$var;
 			}
-			my $temp = $frame.push-temp($type);
-			$.compile-expr-to-loc($frame, $temp, $expr, $out);
-			$temp;
 		} elsif $expr<expression-part> {
 			$.compile-expr-part($frame, $expr<expression-part>, $out);
 		} else {
@@ -711,87 +819,17 @@ class Program {
 
 	method compile-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out) {
 		if $expr<bin-op> {
-			my $lhs = $expr<bin-op><expression-part>;
-			my $rhs = $expr<bin-op><expression>;
 			my $operator = $expr<bin-op><bin-operator>.Str;
+			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out);
+			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out);
 
-			my $lhs-var = $.compile-expr-part($frame, $lhs, $out);
-			my $rhs-var = $.compile-expr($frame, $rhs, $out);
-
-			my $src-type = $.reconcile-types($lhs-var.type, $rhs-var.type);
-			my $swap-opers = False;
-
-			if $dest.type === %builtin-types<bool> and $src-type === %builtin-types<bool> {
-				if $operator eq "==" {
-					$out.append(LolOp::EQ_8);
-				} elsif $operator eq "!=" {
-					$out.append(LolOp::NEQ_8);
-				} else {
-					die "Bad operator: '$operator'";
-				}
-			} elsif $dest.type === %builtin-types<bool> and $src-type === %builtin-types<int> {
-				if $operator eq "==" {
-					$out.append(LolOp::EQ_32);
-				} elsif $operator eq "!=" {
-					$out.append(LolOp::NEQ_32);
-				} elsif $operator eq "<" {
-					$out.append(LolOp::LT_I32);
-				} elsif $operator eq "<=" {
-					$out.append(LolOp::LE_I32);
-				} elsif $operator eq ">" {
-					$out.append(LolOp::LT_I32);
-					$swap-opers = True;
-				} elsif $operator eq ">=" {
-					$out.append(LolOp::LE_I32);
-					$swap-opers = True;
-				} else {
-					die "Bad operator: '$operator'";
-				}
-			} elsif $dest.type === %builtin-types<bool> and $src-type === %builtin-types<long> {
-				if $operator eq "==" {
-					$out.append(LolOp::EQ_64);
-				} elsif $operator eq "!=" {
-					$out.append(LolOp::NEQ_64);
-				} elsif $operator eq "<" {
-					$out.append(LolOp::LT_I64);
-				} elsif $operator eq "<=" {
-					$out.append(LolOp::LE_I64);
-				} elsif $operator eq ">" {
-					$out.append(LolOp::LT_I64);
-					$swap-opers = True;
-				} elsif $operator eq ">=" {
-					$out.append(LolOp::LE_I64);
-					$swap-opers = True;
-				} else {
-					die "Bad operator: '$operator'";
-				}
-			} elsif $dest.type === %builtin-types<int> and $src-type === %builtin-types<int> {
-				if $operator eq "+" {
-					$out.append(LolOp::ADD_32);
-				} else {
-					die "Bad operator: '$operator'";
-				}
-			} elsif $dest.type === %builtin-types<long> and $src-type === %builtin-types<long> {
-				if $operator eq "+" {
-					$out.append(LolOp::ADD_64);
-				} else {
-					die "Bad operator: '$operator'";
-				}
-			} else {
-				die "Bad type: '{$dest.type.name}'";
+			my $type = $.compile-bin-op($dest.index, $lhs, $rhs, $operator, $out);
+			if not ($type === $dest.type) {
+				die "Expression resulted in '{$type.name}', expected '{$dest.type}'";
 			}
 
-			append-i16le($out, $dest.index);
-			if $swap-opers {
-				append-i16le($out, $rhs-var.index);
-				append-i16le($out, $lhs-var.index);
-			} else {
-				append-i16le($out, $lhs-var.index);
-				append-i16le($out, $rhs-var.index);
-			}
-
-			$frame.pop-if-temp($rhs-var);
-			$frame.pop-if-temp($lhs-var);
+			$frame.pop-if-temp($rhs);
+			$frame.pop-if-temp($lhs);
 		} elsif $expr<expression-part> {
 			$.compile-expr-part-to-loc($frame, $dest, $expr<expression-part>, $out);
 		} else {
@@ -869,6 +907,18 @@ class Program {
 			}
 
 			append-i16le($out, $var.index);
+			$frame.pop-if-temp($var);
+		} elsif $statm<dump-statm> {
+			my $dummy-out = Buf.new();
+			my $var = $.compile-expr($frame, $statm<dump-statm><expression>, $dummy-out);
+			say "    Result of expression ({$statm<dump-statm><expression>.Str}):";
+			say "      Type: '{$var.type.name}' (size {$var.type.size})";
+			if $var.temp {
+				say "      Index: {$var.index} (temporary)";
+			} else {
+				say "      Index: {$var.index} (non-temporary)";
+			}
+			say "      Codegen size: {+$dummy-out} bytes";
 			$frame.pop-if-temp($var);
 		} elsif $statm<if-statm> {
 			my $cond-var = $.compile-expr($frame, $statm<if-statm><expression>, $out);
