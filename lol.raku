@@ -129,7 +129,15 @@ grammar Lol {
 	}
 
 	rule type {
-		<identifier> ('[' <type>+ %% ',' ']')?
+		<identifier> ('[' <type-param>+ %% ',' ']')?
+	}
+
+	rule type-param {
+		<type> | <type-param-int>
+	}
+
+	token type-param-int {
+		'-'? \d+
 	}
 
 	token identifier {
@@ -235,6 +243,11 @@ class StructType is Type {
 
 class PointerType is Type {
 	has Type $.pointee;
+}
+
+class ArrayType is Type {
+	has Type $.elem;
+	has Int $.elem-count;
 }
 
 class Location {
@@ -401,16 +414,54 @@ class Program {
 		}
 	}
 
+	method get-array-type(Type $elem, Int $size) {
+		my $name = "array[{$elem.name},$size]";
+		if %.types{$name}:exists {
+			%.types{$name};
+		} else {
+			my $type = ArrayType.new(
+				elem => $elem,
+				elem-size => $size,
+				size => $elem.size * $size,
+				name => $name,
+			);
+			%.types{$name} = $type;
+			$type;
+		}
+	}
+
 	method type-from-cst($type-cst) returns Type {
 		my $name = $type-cst<identifier>.Str;
 
 		if $name eq "ptr" {
-			if not $type-cst[0] or +$type-cst[0]<type> != 1 {
+			if not $type-cst[0] or +$type-cst[0]<type-param> != 1 {
 				die "'ptr' requires 1 type parameter";
 			}
 
-			my $pointee = $.type-from-cst($type-cst[0]<type>[0]);
+			my $param = $type-cst[0]<type-param>[0];
+			if not $param<type> {
+				die "'ptr' requires its type parameter to be a type"
+			}
+
+			my $pointee = $.type-from-cst($param<type>);
 			$.get-pointer-type-to($pointee);
+		} elsif $name eq "array" {
+			if not $type-cst[0] or +$type-cst[0]<type-param> != 2 {
+				die "'array' requires 2 type parameters";
+			}
+
+			my $param-elem = $type-cst[0]<type-param>[0];
+			if not $param-elem<type> {
+				die "'array' requires its first type parameter to be a type";
+			}
+
+			my $param-size = $type-cst[0]<type-param>[1];
+			if not $param-size<type-param-int> {
+				die "'array' requires its second type parameter to be an integer";
+			}
+
+			my $elem = $.type-from-cst($param-elem<type>);
+			$.get-array-type($elem, +$param-size<type-param-int>.Str);
 		} elsif %.types{$name}:exists {
 			%.types{$name};
 		} else {
