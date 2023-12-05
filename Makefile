@@ -1,6 +1,7 @@
 CFLAGS = -g
 
-lolvm: lolvm.c
+lolvm: lolvm.c instructions.x.h
+	$(CC) $(CFLAGS) -o $@ $<
 
 .PHONY: clean
 clean:
