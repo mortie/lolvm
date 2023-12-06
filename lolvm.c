@@ -121,187 +121,187 @@ size_t pretty_print_instruction(unsigned char *instr)
 	size_t iptr = 0;
 	switch ((enum lolvm_op)instr[iptr++]) {
 	case LOL_SETI_8:
-		fprintf(stderr, "SETI_8 @%i, %u\n", OP_OFFSET(0), OP_U8(2));
+		printf("SETI_8 @%i, %u\n", OP_OFFSET(0), OP_U8(2));
 		return 3;
 	case LOL_SETI_32:
-		fprintf(stderr, "SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
+		printf("SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
 		return 6;
 	case LOL_SETI_64:
-		fprintf(stderr, "SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
+		printf("SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
 		return 10;
 
 	case LOL_COPY_8:
-		fprintf(stderr, "COPY_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("COPY_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_COPY_32:
-		fprintf(stderr, "COPY_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("COPY_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_COPY_64:
-		fprintf(stderr, "COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_COPY_N:
-		fprintf(stderr, "COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
 	case LOL_ADD_8:
-		fprintf(stderr, "ADD_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("ADD_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_ADD_32:
-		fprintf(stderr, "ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_ADD_64:
-		fprintf(stderr, "ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_ADD_F32:
-		fprintf(stderr, "ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("ADD_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_ADD_F64:
-		fprintf(stderr, "ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("ADD_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_ADDI_8:
-		fprintf(stderr, "ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U8(4));
+		printf("ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U8(4));
 		return 5;
 	case LOL_ADDI_32:
-		fprintf(stderr, "ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 	case LOL_ADDI_64:
-		fprintf(stderr, "ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
+		printf("ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
 		return 12;
 
 	case LOL_EQ_8:
-		fprintf(stderr, "EQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("EQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_EQ_32:
-		fprintf(stderr, "EQ_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("EQ_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_EQ_64:
-		fprintf(stderr, "EQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("EQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_EQ_F32:
-		fprintf(stderr, "EQ_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("EQ_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_EQ_F64:
-		fprintf(stderr, "EQ_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("EQ_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_NEQ_8:
-		fprintf(stderr, "NEQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("NEQ_8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_NEQ_32:
-		fprintf(stderr, "NEQ_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("NEQ_32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_NEQ_64:
-		fprintf(stderr, "NEQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("NEQ_64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_NEQ_F32:
-		fprintf(stderr, "NEQ_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("NEQ_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_NEQ_F64:
-		fprintf(stderr, "NEQ_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("NEQ_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_LT_U8:
-		fprintf(stderr, "LT_U8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LT_U8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LT_I32:
-		fprintf(stderr, "LT_I32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LT_I32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LT_I64:
-		fprintf(stderr, "LT_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LT_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LT_F32:
-		fprintf(stderr, "LT_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LT_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LT_F64:
-		fprintf(stderr, "LT_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LT_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_LE_U8:
-		fprintf(stderr, "LE_U8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LE_U8 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LE_I32:
-		fprintf(stderr, "LE_I32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LE_I32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LE_I64:
-		fprintf(stderr, "LE_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LE_I64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LE_F32:
-		fprintf(stderr, "LE_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LE_F32 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 	case LOL_LE_F64:
-		fprintf(stderr, "LE_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
+		printf("LE_F64 @%i, @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2), OP_OFFSET(4));
 		return 6;
 
 	case LOL_REF:
-		fprintf(stderr, "REF @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("REF @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 
 	case LOL_LOAD_8:
-		fprintf(stderr, "LOAD_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("LOAD_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_LOAD_32:
-		fprintf(stderr, "LOAD_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("LOAD_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_LOAD_64:
-		fprintf(stderr, "LOAD_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("LOAD_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_LOAD_N:
-		fprintf(stderr, "LOAD_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("LOAD_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
 	case LOL_STORE_8:
-		fprintf(stderr, "STORE_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("STORE_8 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_STORE_32:
-		fprintf(stderr, "STORE_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("STORE_32 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_STORE_64:
-		fprintf(stderr, "STORE_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("STORE_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_STORE_N:
-		fprintf(stderr, "STORE_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("STORE_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
 	case LOL_CALL:
-		fprintf(stderr, "CALL @%i, %u\n", OP_OFFSET(0), OP_U32(2));
+		printf("CALL @%i, %u\n", OP_OFFSET(0), OP_U32(2));
 		return 6;
 	case LOL_RETURN:
-		fprintf(stderr, "RETURN\n");
+		printf("RETURN\n");
 		return 0;
 
 	case LOL_BRANCH:
-		fprintf(stderr, "BRANCH @%i\n", OP_OFFSET(0));
+		printf("BRANCH @%i\n", OP_OFFSET(0));
 		return 2;
 	case LOL_BRANCH_Z:
-		fprintf(stderr, "BRANCH_Z @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("BRANCH_Z @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_BRANCH_NZ:
-		fprintf(stderr, "BRANCH_NZ @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
+		printf("BRANCH_NZ @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 
 	case LOL_DBG_PRINT_U8:
-		fprintf(stderr, "DBG_PRINT_U8 @%i\n", OP_OFFSET(0));
+		printf("DBG_PRINT_U8 @%i\n", OP_OFFSET(0));
 		return 2;
 	case LOL_DBG_PRINT_I32:
-		fprintf(stderr, "DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
+		printf("DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
 		return 2;
 	case LOL_DBG_PRINT_I64:
-		fprintf(stderr, "DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
+		printf("DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
 		return 2;
 	case LOL_DBG_PRINT_F32:
-		fprintf(stderr, "DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
+		printf("DBG_PRINT_I32 @%i\n", OP_OFFSET(0));
 		return 2;
 	case LOL_DBG_PRINT_F64:
-		fprintf(stderr, "DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
+		printf("DBG_PRINT_I64 @%i\n", OP_OFFSET(0));
 		return 2;
 
 	case LOL_HALT:
-		fprintf(stderr, "HALT\n");
+		printf("HALT\n");
 		return 0;
 	}
 
-	fprintf(stderr, "Bad instruction (%02x)\n", *instr);
+	printf("Bad instruction (%02x)\n", *instr);
 
 	#undef OP_U8
 	#undef OP_OFFSET
@@ -316,7 +316,7 @@ size_t pretty_print_instruction(unsigned char *instr)
 void pretty_print(unsigned char *instrs, size_t size) {
 	size_t iptr = 0;
 	while (iptr < size)  {
-		fprintf(stderr, "%04zu ", iptr);
+		printf("%04zu ", iptr);
 		iptr += pretty_print_instruction(&instrs[iptr]) + 1;
 	}
 }
@@ -453,14 +453,14 @@ void lolvm_run(struct lolvm *vm)
 void lolvm_step_manually(struct lolvm *vm)
 {
 	while (!vm->halted) {
-		fprintf(stderr, "sptr: %zu, cptr: %zu\n", vm->sptr, vm->cptr);
-		fprintf(stderr, "%04zu: ", vm->iptr);
+		printf("sptr: %zu, cptr: %zu\n", vm->sptr, vm->cptr);
+		printf("%04zu: ", vm->iptr);
 		size_t n = pretty_print_instruction(&vm->instrs[vm->iptr]);
 		for (size_t i = 0; i < n + 1; ++i) {
 			if (i == n) {
-				fprintf(stderr, "%02x\n", vm->instrs[vm->iptr + i]);
+				printf("%02x\n", vm->instrs[vm->iptr + i]);
 			} else {
-				fprintf(stderr, "%02x ", vm->instrs[vm->iptr + i]);
+				printf("%02x ", vm->instrs[vm->iptr + i]);
 			}
 		}
 
@@ -491,7 +491,7 @@ int main(int argc, char **argv)
 		} else if (strcmp(argv[i], "--run") == 0) {
 			do_run = 1;
 		} else if (argv[i][0] == '-') {
-			fprintf(stderr, "Unknown option: %s\n", argv[i]);
+			printf("Unknown option: %s\n", argv[i]);
 			return 1;
 		} else {
 			path = argv[i];
