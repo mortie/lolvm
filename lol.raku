@@ -1169,9 +1169,9 @@ class Program {
 	}
 
 	method compile-expr($frame, $expr, Buf $out) returns LocalLocation {
-#		CATCH {
-#			die "{.Str}\n  in expr: ({$expr.Str})";
-#		}
+		CATCH {
+			die "{.Str}\n  in expr: ({$expr.Str})";
+		}
 
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
@@ -1286,9 +1286,9 @@ class Program {
 	}
 
 	method compile-statm($frame, $statm, Buf $out) {
-#		CATCH {
-#			die "{.Str}\n  in statm: {$statm.Str}\n";
-#		}
+		CATCH {
+			die "{.Str}\n  in statm: {$statm.Str}\n";
+		}
 
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out);
