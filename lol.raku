@@ -11,7 +11,15 @@ grammar Lol {
 	}
 
 	rule struct-decl {
-		'struct' <identifier> '{' <struct-fields> '}'
+		'struct' <identifier> <formal-type-params>? '{' <struct-fields> '}'
+	}
+
+	rule formal-type-params {
+		'[' <formal-type-param>* %% ',' ']'
+	}
+
+	rule formal-type-param {
+		<identifier>
 	}
 
 	rule struct-fields {
@@ -388,6 +396,7 @@ class FuncCallFixup {
 
 class Program {
 	has Type %.types;
+	has %.struct-templates;
 	has FuncDecl @.funcs;
 	has FuncDecl %.funcs-map;
 
@@ -430,38 +439,136 @@ class Program {
 		}
 	}
 
-	method type-from-cst($type-cst) returns Type {
+	method get-struct-type-from-template($name is rw, $struct-template, @params, %aliases) {
+		$name ~= "[";
+		my $first = True;
+		for @params -> $param {
+			if not $first {
+				$name ~= ","
+			}
+			$first = False;
+
+			if $param.isa(Type) {
+				$name ~= $param.name;
+			} else {
+				$name ~= $param.Str;
+			}
+		}
+		$name ~= "]";
+
+		if %.types{$name}:exists {
+			return %.types{$name};
+		}
+
+		my @formal-params = $struct-template<formal-type-params><formal-type-param>;
+		if +@formal-params != +@params {
+			die "'{$name}' expects {+@formal-params} type parameters, got {+@params}";
+		}
+
+		my %new-aliases = %aliases.clone();
+		for @formal-params Z @params -> ($formal-param, $param) {
+			%new-aliases{$formal-param<identifier>.Str} = $param
+		}
+
+		my %fields;
+		my $size = 0;
+		for $struct-template<struct-fields><struct-field> -> $struct-field-cst {
+			my $field-type = $.type-from-cst($struct-field-cst<type>, %new-aliases);
+			my $field-name = $struct-field-cst<identifier>.Str;
+
+			if %fields{$field-name}:exists {
+				die "Duplicate field name: $field-name";
+			}
+
+			%fields{$field-name} = StructField.new(
+				offset => $size,
+				type => $field-type,
+			);
+			$size += $field-type.size;
+		}
+
+		my $type = StructType.new(
+			fields => %fields,
+			size => $size,
+			name => "$name",
+		);
+		%.types{$name} = $type;
+		return $type;
+	}
+
+	method type-from-cst($type-cst, %aliases?) returns Type {
+		if not %aliases.defined {
+			%aliases = %();
+		}
+
 		my $name = $type-cst<identifier>.Str;
 
+		if %aliases{$name}:exists and not $type-cst[0] {
+			my $param = %aliases{$name};
+			if $param.isa(Type) {
+				return $param;
+			} elsif $param.isa(Int) {
+				die "Integer type parameter not expected here";
+			} else {
+				die "Bad type alias '{$param.Str}'";
+			}
+		}
+
+		my @params;
+		if $type-cst[0] {
+			for $type-cst[0]<type-param> -> $param {
+				my $alias;
+				if $param<type> {
+					my $type-name = $param<type><identifier>.Str;
+					if %aliases{$type-name} and not $param<type>[0] {
+						$alias = %aliases{$type-name};
+					}
+				}
+
+				if $alias.defined {
+					@params.append($alias);
+				} elsif $param<type> {
+					@params.append($.type-from-cst($param<type>, %aliases));
+				} elsif $param<type-param-int> {
+					@params.append(+$param<type-param-int>);
+				} else {
+					die "Oh noes";
+				}
+			}
+		}
+
 		if $name eq "ptr" {
-			if not $type-cst[0] or +$type-cst[0]<type-param> != 1 {
+			if +@params != 1 {
 				die "'ptr' requires 1 type parameter";
 			}
 
-			my $param = $type-cst[0]<type-param>[0];
-			if not $param<type> {
+			if not @params[0].isa(Type) {
 				die "'ptr' requires its type parameter to be a type"
 			}
 
-			my $pointee = $.type-from-cst($param<type>);
+			my $pointee = @params[0];
 			$.get-pointer-type-to($pointee);
 		} elsif $name eq "array" {
-			if not $type-cst[0] or +$type-cst[0]<type-param> != 2 {
+			if +@params != 2 {
 				die "'array' requires 2 type parameters";
 			}
 
-			my $param-elem = $type-cst[0]<type-param>[0];
-			if not $param-elem<type> {
+			if not @params[0].isa(Type) {
 				die "'array' requires its first type parameter to be a type";
 			}
 
-			my $param-size = $type-cst[0]<type-param>[1];
-			if not $param-size<type-param-int> {
+			if not @params[1].isa(Int) {
 				die "'array' requires its second type parameter to be an integer";
 			}
 
-			my $elem = $.type-from-cst($param-elem<type>);
-			$.get-array-type($elem, +$param-size<type-param-int>.Str);
+			$.get-array-type(@params[0], @params[1]);
+		} elsif %.struct-templates{$name}:exists {
+			if +@params == 0 {
+				die "'{$name}' requires type parameters";
+			}
+
+			my $struct-template = %.struct-templates{$name};
+			$.get-struct-type-from-template($name, $struct-template, @params, %aliases);
 		} elsif %.types{$name}:exists {
 			%.types{$name};
 		} else {
@@ -473,6 +580,11 @@ class Program {
 		my $name = $struct-decl<identifier>.Str;
 		if $.types<$name>:exists {
 			die "A type named $name already exists!";
+		}
+
+		if $struct-decl<formal-type-params>:exists {
+			%.struct-templates{$name} = $struct-decl;
+			return;
 		}
 
 		my %fields;
@@ -1056,9 +1168,9 @@ class Program {
 	}
 
 	method compile-expr($frame, $expr, Buf $out) returns LocalLocation {
-		CATCH {
-			die "{.Str}\n  in expr: ({$expr.Str})";
-		}
+#		CATCH {
+#			die "{.Str}\n  in expr: ({$expr.Str})";
+#		}
 
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
@@ -1173,9 +1285,9 @@ class Program {
 	}
 
 	method compile-statm($frame, $statm, Buf $out) {
-		CATCH {
-			die "{.Str}\n  in statm: {$statm.Str}\n";
-		}
+#		CATCH {
+#			die "{.Str}\n  in statm: {$statm.Str}\n";
+#		}
 
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out);
