@@ -879,9 +879,11 @@ class Program {
 			}
 
 			my $return-val = $frame.push-temp($func.return-var.type);
+			my $stack-bump = $frame.idx;
 			my @param-vars;
 			for 0..^+$func.params -> $i {
 				my $param = $func.params[$i];
+				$stack-bump += $param.type.size;
 				my $expr = $part<func-call><expression>[$i];
 				my $var = $.compile-expr($frame, $expr, $out);
 				if not ($var.type === $param.type) {
@@ -899,8 +901,7 @@ class Program {
 			}
 
 			$out.append(LolOp::CALL);
-
-			append-i16le($out, $frame.idx);
+			append-i16le($out, $stack-bump);
 
 			if $func.offset.defined {
 				append-u32le($out, $func.offset);
@@ -1223,11 +1224,11 @@ class Program {
 
 	method generate-copy(Int $dest, Int $src, Int $size, Buf $out) {
 		if $size == 1 {
-			$out.append(LolOp::COPY_32);
+			$out.append(LolOp::COPY_8);
 			append-i16le($out, $dest);
 			append-i16le($out, $src);
 		} elsif $size == 4 {
-			$out.append(LolOp::COPY_8);
+			$out.append(LolOp::COPY_32);
 			append-i16le($out, $dest);
 			append-i16le($out, $src);
 		} elsif $size == 8 {
