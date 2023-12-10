@@ -101,8 +101,7 @@ grammar Lol {
 	}
 
 	rule method-call-level-expr {
-		| <method-call>
-		| <expression-part>
+		(<method-call> | <expression-part>) <locator-suffix>*
 	}
 
 	rule method-call {
@@ -262,12 +261,20 @@ class Location {
 class LocalLocation is Location {
 	has Int $.index;
 	has Bool $.temp is rw;
+
+	method materialize(Buf $out) returns LocalLocation {
+		$;
+	}
 }
 
 class DereferenceLocation is Location {
 	has LocalLocation $.local;
 	has Int $.offset is rw;
 	has Bool $.dereference-in-place;
+
+	method materialize(Buf $out) returns LocalLocation {
+		die "Oh no I don't know how to do this";
+	}
 }
 
 class FuncParam {
@@ -360,8 +367,8 @@ class StackFrame {
 		$var;
 	}
 
-	method pop-if-temp(LocalLocation $var) {
-		if $var.temp {
+	method pop-if-temp(Location $var) {
+		if $var.isa(LocalLocation) and $var.temp {
 			my $popped-var = @.temps.pop();
 			if not ($var === $popped-var) {
 				die "Popped non-top-of-stack '{$var.type.name}' variable at index {$var.index} " ~
@@ -369,6 +376,10 @@ class StackFrame {
 			}
 
 			$.idx -= $var.type.size;
+		} elsif $var.isa(DereferenceLocation) {
+			$.pop-if-temp($var.local);
+		} else {
+			die "Bad location '$var'";
 		}
 	}
 
@@ -941,7 +952,7 @@ class Program {
 		}
 	}
 
-	method compile-expr-part($frame, $part, Buf $out, %aliases) returns LocalLocation {
+	method compile-expr-part($frame, $part, Buf $out, %aliases) returns Location {
 		if $part<uninitialized> {
 			$frame.push-temp($.type-from-cst($part<uninitialized><type>, %aliases));
 		} elsif $part<num-literal> {
@@ -1011,7 +1022,7 @@ class Program {
 				my $param = $func.formal-params[$i];
 				$stack-bump += $param.type.size;
 				my $expr = $part<func-call><expression>[$i];
-				my $var = $.compile-expr($frame, $expr, $out, %aliases);
+				my $var = $.compile-expr($frame, $expr, $out, %aliases).mateialize($out);
 				if not ($var.type === $param.type) {
 					die "Function call with invalid parameter type: " ~
 						"Expected '{$param.type.name}', got '{$var.type.name}'";
@@ -1117,7 +1128,7 @@ class Program {
 				die "Bad bool '{$part<bool-literal>}'";
 			}
 		} else {
-			my $src = $.compile-expr-part($frame, $part, $out, %aliases);
+			my $src = $.compile-expr-part($frame, $part, $out, %aliases).materialize($out);
 			my $type = $.reconcile-types($dest.type, $src.type);
 			$.generate-copy($dest.index, $src.index, $type.size, $out);
 			$frame.pop-if-temp($src);
@@ -1300,7 +1311,9 @@ class Program {
 		$dest-type;
 	}
 
-	method compile-method-call-level-expr($frame, $expr, Buf $out, %aliases) returns LocalLocation {
+	method compile-method-call-level-expr($frame, $mcexpr, Buf $out, %aliases) returns Location {
+		my $expr = $mcexpr[0];
+		my $var;
 		if $expr<method-call> {
 			my $type = $.get-expr-part-type($frame, $expr<method-call><expression-part>, %aliases);
 			if $type.isa(PointerType) {
@@ -1328,10 +1341,10 @@ class Program {
 				my $var;
 				if $i == 0 {
 					my $part = $expr<method-call><expression-part>;
-					$var = $.compile-expr-part($frame, $part, $out, %aliases);
+					$var = $.compile-expr-part($frame, $part, $out, %aliases).materialize($out);
 				} else {
 					my $e = $expr<method-call><expression>[$i];
-					$var = $.compile-expr($frame, $e, $out, %aliases);
+					$var = $.compile-expr($frame, $e, $out, %aliases).materialize($out);
 				}
 
 				if not ($var.type === $param.type) {
@@ -1366,12 +1379,24 @@ class Program {
 				$frame.pop-if-temp($var);
 			}
 
-			$return-val;
+			$var = $return-val;
 		} elsif $expr<expression-part> {
-			$.compile-expr-part($frame, $expr<expression-part>, $out, %aliases);
+			$var = $.compile-expr-part($frame, $expr<expression-part>, $out, %aliases);
 		} else {
 			die "Bad expression '$expr'";
 		}
+
+		for $mcexpr<locator-suffix> -> $suffix {
+			if $suffix<locator-dereference> {
+				if not $var.isa(PointerType) {
+					die "Dereference of non-pointer type '{$var.type.name}';
+				}
+			} else {
+				die "Bad suffix: $suffix";
+			}
+		}
+
+		$var;
 	}
 
 	method compile-method-call-level-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out, %aliases) {
@@ -1385,7 +1410,7 @@ class Program {
 		}
 	}
 
-	method compile-expr($frame, $expr, Buf $out, %aliases) returns LocalLocation {
+	method compile-expr($frame, $expr, Buf $out, %aliases) returns Location {
 		CATCH {
 			die "{.Str}\n  in expr: ({$expr.Str})";
 		}
@@ -1393,8 +1418,9 @@ class Program {
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
 			my $lhs = $.compile-method-call-level-expr(
-				$frame, $expr<bin-op><method-call-level-expr>, $out, %aliases);
-			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases);
+				$frame, $expr<bin-op><method-call-level-expr>, $out, %aliases).materialize($out);
+			my $rhs = $.compile-expr(
+				$frame, $expr<bin-op><expression>, $out, %aliases).materialize($out);
 			if $lhs.temp {
 				my $type = $.compile-bin-op($lhs.index, $lhs, $rhs, $operator, $out);
 				$frame.pop-if-temp($rhs);
@@ -1420,8 +1446,10 @@ class Program {
 	method compile-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out, %aliases) {
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
-			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out, %aliases);
-			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases);
+			my $lhs = $.compile-expr-part(
+				$frame, $expr<bin-op><expression-part>, $out, %aliases).materialize($out);
+			my $rhs = $.compile-expr(
+				$frame, $expr<bin-op><expression>, $out, %aliases).materialize($out);
 
 			my $type = $.compile-bin-op($dest.index, $lhs, $rhs, $operator, $out);
 			if not ($type === $dest.type) {
