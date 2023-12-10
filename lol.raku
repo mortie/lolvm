@@ -31,7 +31,7 @@ grammar Lol {
 	}
 
 	rule func-decl {
-		<type> <identifier> '(' <formal-params> ')' <block>
+		<type> <identifier> <formal-type-params>? '(' <formal-params> ')' <block>
 	}
 
 	rule formal-params {
@@ -113,7 +113,7 @@ grammar Lol {
 	}
 
 	rule func-call {
-		<identifier> '(' <expression>* %% ',' ')'
+		<identifier> <type-params>? '(' <expression>* %% ',' ')'
 	}
 
 	rule locator {
@@ -137,7 +137,11 @@ grammar Lol {
 	}
 
 	rule type {
-		<identifier> ('[' <type-param>+ %% ',' ']')?
+		<identifier> <type-params>?
+	}
+
+	rule type-params {
+		'[' <type-param>+ %% ',' ']'
 	}
 
 	rule type-param {
@@ -281,8 +285,9 @@ class FuncParam {
 class FuncDecl {
 	has Str $.name;
 	has LocalLocation $.return-var;
-	has FuncParam @.params;
+	has FuncParam @.formal-params;
 	has $.body;
+	has %.aliases;
 
 	has Int $.offset is rw = Nil;
 }
@@ -399,8 +404,12 @@ class Program {
 	has %.struct-templates;
 	has FuncDecl @.funcs;
 	has FuncDecl %.funcs-map;
+	has %.func-templates;
+	has FuncDecl @.materialized-func-templates;
+	has FuncDecl %.materialized-func-templates-map;
 
 	has FuncCallFixup @.func-call-fixups;
+	has FuncCallFixup @.func-template-call-fixups;
 
 	method register-defaults() {
 		for %builtin-types.kv -> $k, $v {
@@ -496,11 +505,31 @@ class Program {
 		return $type;
 	}
 
-	method type-from-cst($type-cst, %aliases?) returns Type {
-		if not %aliases.defined {
-			%aliases = %();
-		}
+	method type-params-from-cst($type-params-cst, %aliases) {
+		my @params;
+		for $type-params-cst<type-param> -> $param {
+			my $alias;
+			if $param<type> {
+				my $type-name = $param<type><identifier>.Str;
+				if %aliases{$type-name} and not $param<type>[0] {
+					$alias = %aliases{$type-name};
+				}
+			}
 
+			if $alias.defined {
+				@params.append($alias);
+			} elsif $param<type> {
+				@params.append($.type-from-cst($param<type>, %aliases));
+			} elsif $param<type-param-int> {
+				@params.append(+$param<type-param-int>);
+			} else {
+				die "Oh noes";
+			}
+		}
+		@params;
+	}
+
+	method type-from-cst($type-cst, %aliases) returns Type {
 		my $name = $type-cst<identifier>.Str;
 
 		if %aliases{$name}:exists and not $type-cst[0] {
@@ -510,31 +539,13 @@ class Program {
 			} elsif $param.isa(Int) {
 				die "Integer type parameter not expected here";
 			} else {
-				die "Bad type alias '{$param.Str}'";
+				die "Bad type alias '$param'";
 			}
 		}
 
 		my @params;
-		if $type-cst[0] {
-			for $type-cst[0]<type-param> -> $param {
-				my $alias;
-				if $param<type> {
-					my $type-name = $param<type><identifier>.Str;
-					if %aliases{$type-name} and not $param<type>[0] {
-						$alias = %aliases{$type-name};
-					}
-				}
-
-				if $alias.defined {
-					@params.append($alias);
-				} elsif $param<type> {
-					@params.append($.type-from-cst($param<type>, %aliases));
-				} elsif $param<type-param-int> {
-					@params.append(+$param<type-param-int>);
-				} else {
-					die "Oh noes";
-				}
-			}
+		if $type-cst<type-params> {
+			@params = @.type-params-from-cst($type-cst<type-params>, %aliases);
 		}
 
 		if $name eq "ptr" {
@@ -578,7 +589,7 @@ class Program {
 
 	method analyze-struct-decl($struct-decl) {
 		my $name = $struct-decl<identifier>.Str;
-		if $.types<$name>:exists {
+		if $.types{$name}:exists {
 			die "A type named $name already exists!";
 		}
 
@@ -590,7 +601,11 @@ class Program {
 		my %fields;
 		my $size = 0;
 		for $struct-decl<struct-fields><struct-field> -> $struct-field-cst {
-			my $field-type = $.type-from-cst($struct-field-cst<type>);
+			if %.struct-templates{$name}:exists {
+				die "A function template named $name already exists!";
+			}
+
+			my $field-type = $.type-from-cst($struct-field-cst<type>, %());
 			my $field-name = $struct-field-cst<identifier>.Str;
 
 			if %fields{$field-name}:exists {
@@ -611,35 +626,49 @@ class Program {
 		);
 	}
 
-	method analyze-func-decl($func-decl) {
-		my $name = $func-decl<identifier>.Str;
-		if $.funcs<$name>:exists {
-			die "A function named $name already exists!";
-		}
-
-		my $return-type = $.type-from-cst($func-decl<type>);
+	method create-func-decl($name, $func-decl-cst, %aliases) {
+		my $return-type = $.type-from-cst($func-decl-cst<type>, %aliases);
 		my $return-index = -$return-type.size;
 
-		my @params;
-		for $func-decl<formal-params>[0] -> $formal-param-cst {
-			my $type = $.type-from-cst($formal-param-cst<type>);
+		my @formal-params;
+		for $func-decl-cst<formal-params>[0] -> $formal-param-cst {
+			my $type = $.type-from-cst($formal-param-cst<type>, %aliases);
 			$return-index -= $type.size;
-			@params.push(FuncParam.new(
+			@formal-params.push(FuncParam.new(
 				type => $type,
 				name => $formal-param-cst<identifier>.Str,
 			));
 		}
 
-		my $func = FuncDecl.new(
+		FuncDecl.new(
 			name => $name,
 			return-var => LocalLocation.new(
 				index => $return-index,
 				type => $return-type,
 				temp => False,
 			),
-			params => @params,
-			body => $func-decl<block>,
+			formal-params => @formal-params,
+			body => $func-decl-cst<block>,
+			aliases => %aliases,
 		);
+	}
+
+	method analyze-func-decl($func-decl-cst) {
+		my $name = $func-decl-cst<identifier>.Str;
+		if $.funcs{$name}:exists {
+			die "A function named $name already exists!";
+		}
+
+		if $func-decl-cst<formal-type-params>:exists {
+			if %.func-templates{$name}:exists {
+				die "A function template named $name already exists!";
+			}
+
+			%.func-templates{$name} = $func-decl-cst;
+			return;
+		}
+
+		my $func = $.create-func-decl($name, $func-decl-cst, %());
 		@.funcs.append($func);
 		%.funcs-map{$name} = $func;
 	}
@@ -807,9 +836,66 @@ class Program {
 		$location;
 	}
 
-	method compile-expr-part($frame, $part, Buf $out) returns LocalLocation {
+	method resolve-func-decl($func-call-cst, %aliases) returns FuncDecl {
+		my $name = $func-call-cst<identifier>.Str;
+
+		if %.funcs-map{$name} {
+			if $func-call-cst<actual-type-params>:exists {
+				die "Type parameters provided to non-template function";
+			}
+
+			return %.funcs-map{$name};
+		} elsif %.func-templates{$name} {
+			if not $func-call-cst<type-params>:exists {
+				die "No type parameters provided for template function";
+			}
+
+			my $func-decl-cst = %.func-templates{$name};
+
+			my @params = @.type-params-from-cst($func-call-cst<type-params>, %aliases);
+			$name ~= "[";
+			my $first = True;
+			for @params -> $param {
+				if not $first {
+					$name ~= ","
+				}
+				$first = False;
+
+				if $param.isa(Type) {
+					$name ~= $param.name;
+				} else {
+					$name ~= $param.Str;
+				}
+			}
+			$name ~= "]";
+
+			if %.materialized-func-templates-map{$name} {
+				return %.materialized-func-templates-map{$name};
+			}
+
+			my @formal-params = $func-decl-cst<formal-type-params><formal-type-param>;
+			if +@formal-params != +@params {
+				die "'{$func-decl-cst<identifier>.Str}' expects {+@formal-params} type " ~
+					"parameters, got {+@params}";
+			}
+
+			my %new-aliases = %();
+			for @formal-params Z @params -> ($formal-param, $param) {
+				%new-aliases{$formal-param<identifier>.Str} = $param;
+			}
+
+			my $func = $.create-func-decl($name, $func-decl-cst, %new-aliases);
+			@.materialized-func-templates.append($func);
+			%.materialized-func-templates-map{$name} = $func;
+			$func;
+		} else {
+			die "Unknown function: {$name}";
+		}
+	}
+
+	method compile-expr-part($frame, $part, Buf $out, %aliases) returns LocalLocation {
 		if $part<uninitialized> {
-			$frame.push-temp($.type-from-cst($part<uninitialized><type>));
+			$frame.push-temp($.type-from-cst($part<uninitialized><type>, %aliases));
 		} elsif $part<num-literal> {
 			my $body = $part<num-literal><num-literal-body>.Str;
 
@@ -866,26 +952,18 @@ class Program {
 			}
 			$temp;
 		} elsif $part<group-expression> {
-			$.compile-expr($frame, $part<group-expression><expression>, $out);
+			$.compile-expr($frame, $part<group-expression><expression>, $out, %aliases);
 		} elsif $part<func-call> {
-			my $name = $part<func-call><identifier>.Str;
-			if not %.funcs-map{$name}:exists {
-				die "Call to undefined function '$name'";
-			}
-
-			my $func = %.funcs-map{$name};
-			if +$func.params != +$part<func-call><expression> {
-				die "Function call with invalid number of arguments";
-			}
+			my $func = $.resolve-func-decl($part<func-call>, %aliases);
 
 			my $return-val = $frame.push-temp($func.return-var.type);
 			my $stack-bump = $frame.idx;
 			my @param-vars;
-			for 0..^+$func.params -> $i {
-				my $param = $func.params[$i];
+			for 0..^+$func.formal-params -> $i {
+				my $param = $func.formal-params[$i];
 				$stack-bump += $param.type.size;
 				my $expr = $part<func-call><expression>[$i];
-				my $var = $.compile-expr($frame, $expr, $out);
+				my $var = $.compile-expr($frame, $expr, $out, %aliases);
 				if not ($var.type === $param.type) {
 					die "Function call with invalid parameter type: " ~
 						"Expected '{$param.type.name}', got '{$var.type.name}'";
@@ -908,7 +986,7 @@ class Program {
 			} else {
 				$.func-call-fixups.append(FuncCallFixup.new(
 					location => +$out,
-					name => $name,
+					name => $func.name,
 				));
 				append-u32le($out, 0);
 			}
@@ -964,9 +1042,9 @@ class Program {
 		}
 	}
 
-	method compile-expr-part-to-loc($frame, LocalLocation $dest, $part, Buf $out) {
+	method compile-expr-part-to-loc($frame, LocalLocation $dest, $part, Buf $out, %aliases) {
 		if $part<uninitialized> {
-			my $type = $.type-from-cst($part<uninitialized><type>);
+			my $type = $.type-from-cst($part<uninitialized><type>, %aliases);
 			$.reconcile-types($dest.type, $type);
 		} elsif $part<num-literal> {
 			if not ($dest.type === %builtin-types<int>) {
@@ -991,7 +1069,7 @@ class Program {
 				die "Bad bool '{$part<bool-literal>}'";
 			}
 		} else {
-			my $src = $.compile-expr-part($frame, $part, $out);
+			my $src = $.compile-expr-part($frame, $part, $out, %aliases);
 			my $type = $.reconcile-types($dest.type, $src.type);
 			$.generate-copy($dest.index, $src.index, $type.size, $out);
 			$frame.pop-if-temp($src);
@@ -1168,15 +1246,15 @@ class Program {
 		$dest-type;
 	}
 
-	method compile-expr($frame, $expr, Buf $out) returns LocalLocation {
-		CATCH {
-			die "{.Str}\n  in expr: ({$expr.Str})";
-		}
+	method compile-expr($frame, $expr, Buf $out, %aliases) returns LocalLocation {
+#		CATCH {
+#			die "{.Str}\n  in expr: ({$expr.Str})";
+#		}
 
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
-			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out);
-			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out);
+			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out, %aliases);
+			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases);
 			if $lhs.temp {
 				my $type = $.compile-bin-op($lhs.index, $lhs, $rhs, $operator, $out);
 				$frame.pop-if-temp($rhs);
@@ -1193,17 +1271,17 @@ class Program {
 				$var;
 			}
 		} elsif $expr<expression-part> {
-			$.compile-expr-part($frame, $expr<expression-part>, $out);
+			$.compile-expr-part($frame, $expr<expression-part>, $out, %aliases);
 		} else {
 			die "Bad expression '$expr'";
 		}
 	}
 
-	method compile-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out) {
+	method compile-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out, %aliases) {
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
-			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out);
-			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out);
+			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out, %aliases);
+			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases);
 
 			my $type = $.compile-bin-op($dest.index, $lhs, $rhs, $operator, $out);
 			if not ($type === $dest.type) {
@@ -1213,9 +1291,9 @@ class Program {
 			$frame.pop-if-temp($rhs);
 			$frame.pop-if-temp($lhs);
 		} elsif $expr<expression-part> {
-			$.compile-expr-part-to-loc($frame, $dest, $expr<expression-part>, $out);
+			$.compile-expr-part-to-loc($frame, $dest, $expr<expression-part>, $out, %aliases);
 		} else {
-			my $src = $.compile-expr($frame, $expr, $out);
+			my $src = $.compile-expr($frame, $expr, $out, %aliases);
 			my $type = $.reconcile-types($dest.type, $src.type);
 			$.generate-copy($dest.index, $src.index, $type.size, $out);
 			$frame.pop-if-temp($src);
@@ -1285,15 +1363,15 @@ class Program {
 		}
 	}
 
-	method compile-statm($frame, $statm, Buf $out) {
-		CATCH {
-			die "{.Str}\n  in statm: {$statm.Str}\n";
-		}
+	method compile-statm($frame, $statm, Buf $out, %aliases) {
+#		CATCH {
+#			die "{.Str}\n  in statm: {$statm.Str}\n";
+#		}
 
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out);
 		} elsif $statm<dbg-print-statm> {
-			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out);
+			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out, %aliases);
 			if $var.type === %builtin-types<bool> {
 				$out.append(LolOp::DBG_PRINT_U8);
 			} elsif $var.type === %builtin-types<int> {
@@ -1312,7 +1390,7 @@ class Program {
 			$frame.pop-if-temp($var);
 		} elsif $statm<dump-statm> {
 			my $dummy-out = Buf.new();
-			my $var = $.compile-expr($frame, $statm<dump-statm><expression>, $dummy-out);
+			my $var = $.compile-expr($frame, $statm<dump-statm><expression>, $dummy-out, %aliases);
 			say "    Dump expression ({$statm<dump-statm><expression>.Str}):";
 			say "      Type: '{$var.type.name}' (size {$var.type.size})";
 			if $var.temp {
@@ -1327,7 +1405,7 @@ class Program {
 
 			$frame.pop-if-temp($var);
 		} elsif $statm<if-statm> {
-			my $cond-var = $.compile-expr($frame, $statm<if-statm><expression>, $out);
+			my $cond-var = $.compile-expr($frame, $statm<if-statm><expression>, $out, %aliases);
 			my $if-start-idx = +$out;
 			$out.append(LolOp::BRANCH_Z);
 			append-i16le($out, $cond-var.index);
@@ -1352,7 +1430,7 @@ class Program {
 			}
 		} elsif $statm<while-statm> {
 			my $while-start-idx = +$out;
-			my $cond-var = $.compile-expr($frame, $statm<while-statm><expression>, $out);
+			my $cond-var = $.compile-expr($frame, $statm<while-statm><expression>, $out, %aliases);
 			my $skip-body-branch-idx = +$out;
 			$out.append(LolOp::BRANCH_Z);
 			append-i16le($out, $cond-var.index);
@@ -1369,19 +1447,19 @@ class Program {
 			$out.write-int16($fixup-skip-body-idx, +$out - $skip-body-branch-idx, LittleEndian);
 		} elsif $statm<return-statm> {
 			$.compile-expr-to-loc(
-				$frame, $frame.func.return-var, $statm<return-statm><expression>, $out);
+				$frame, $frame.func.return-var, $statm<return-statm><expression>, $out, %aliases);
 		} elsif $statm<decl-assign-statm> {
 			my $name = $statm<decl-assign-statm><identifier>.Str;
 			my $expr = $statm<decl-assign-statm><expression>;
 
 			if $frame.has($name) {
-				$.compile-expr-to-loc($frame, $frame.get($name), $expr, $out);
+				$.compile-expr-to-loc($frame, $frame.get($name), $expr, $out, %aliases);
 			} else {
 				if $frame.has-temps() {
 					die "Got declare assign statement while there are temporaries?";
 				}
 
-				my $var = $.compile-expr($frame, $expr, $out);
+				my $var = $.compile-expr($frame, $expr, $out, %aliases);
 				if not $var.temp {
 					my $new-var = $frame.push-temp($var.type);
 					$.generate-copy($new-var.index, $var.index, $var.type, $out);
@@ -1397,9 +1475,9 @@ class Program {
 			my $var = $.locate-by-locator($frame, $statm<assign-statm><locator>, $out);
 			my $expr = $statm<assign-statm><expression>;
 			if $var.isa(LocalLocation) {
-				$.compile-expr-to-loc($frame, $var, $expr, $out);
+				$.compile-expr-to-loc($frame, $var, $expr, $out, %aliases);
 			} elsif $var.isa(DereferenceLocation) {
-				my $temp = $.compile-expr($frame, $expr, $out);
+				my $temp = $.compile-expr($frame, $expr, $out, %aliases);
 				if not ($temp.type === $var.type) {
 					die "Expected '{$var.type.name}', got '{$temp.type.name}'";
 				}
@@ -1417,28 +1495,31 @@ class Program {
 				$frame.pop-if-temp($temp);
 			}
 		} elsif $statm<expression> {
-			my $var = $.compile-expr($frame, $statm<expression>, $out);
+			my $var = $.compile-expr($frame, $statm<expression>, $out, %aliases);
 			$frame.pop-if-temp($var);
 		} else {
 			die "Bad statement '$statm'";
 		}
 	}
 
-	method compile-block($frame, $block, Buf $out) {
+	method compile-block($frame, $block, Buf $out, %aliases) {
 		for $block<statement> -> $statm {
-			$.compile-statm($frame, $statm, $out);
+			$.compile-statm($frame, $statm, $out, %aliases);
 		}
 	}
 
-	method compile-function($func, Buf $out) {
+	method compile-function($func, Buf $out, %aliases) {
+		$func.offset = +$out;
+		say "  Compiling function {$func.name} @ {$func.offset}...";
+
 		my $frame = StackFrame.new(func => $func);
 
 		my $params-index = 0;
-		for $func.params -> $param {
+		for $func.formal-params -> $param {
 			$params-index -= $param.type.size;
 		}
 
-		for $func.params -> $param {
+		for $func.formal-params -> $param {
 			$frame.vars{$param.name} = LocalLocation.new(
 				index => $params-index,
 				type => $param.type,
@@ -1447,7 +1528,7 @@ class Program {
 			$params-index += $param.type.size;
 		}
 
-		$.compile-block($frame, $func.body, $out);
+		$.compile-block($frame, $func.body, $out, %aliases);
 
 		$out.append(LolOp::RETURN);
 	}
@@ -1460,25 +1541,28 @@ class Program {
 		my $main-func = %.funcs-map<main>;
 		if not ($main-func.return-var.type === %builtin-types<void>) {
 			die "Function main must have return type void";
-		} elsif +$main-func.params != 0 {
-			die "Function main must have no parameters";
+		} elsif +$main-func.formal-params != 0 {
+			die "Function main must take no parameters";
 		}
 
-		$out.append(LolOp::CALL, 0, 0);
-		my $main-offset-fixup-idx = +$out;
-		$out.append(0, 0, 0, 0, LolOp::HALT);
+		$out.append(LolOp::CALL, 0, 0, 8, 0, 0, 0);
+		$out.append(LolOp::HALT);
+		$.compile-function($main-func, $out, $main-func.aliases);
 
-		for @.funcs -> $func {
-			$func.offset = +$out;
-			say "  Compiling function {$func.name} @ {$func.offset}...";
-			$.compile-function($func, $out);
-		}
+		while +@.func-call-fixups > 0 {
+			my $fixup = @.func-call-fixups.pop();
+			my $func;
+			if %.funcs-map{$fixup.name} {
+				$func = %.funcs-map{$fixup.name};
+			} elsif %.materialized-func-templates-map{$fixup.name} {
+				$func = %.materialized-func-templates-map{$fixup.name};
+			}
 
-		$out.write-uint32($main-offset-fixup-idx, $main-func.offset, LittleEndian);
+			if not $func.offset.defined {
+				$.compile-function($func, $out, $func.aliases);
+			}
 
-		for @.func-call-fixups -> $fixup {
-			my $func = $.funcs-map{$fixup.name};
-			$out.write-uint32($fixup.location, $func.offset, LittleEndian);
+			$out.write-uint32($fixup.location, $func.offset);
 		}
 	}
 }
