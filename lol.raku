@@ -123,7 +123,7 @@ grammar Lol {
 	}
 
 	rule method-call {
-		<expression-part> ':' <identifier> <type-params>? '(' <expression>* %% ',' ')'
+		<expression-part> '!' <identifier> <type-params>? '(' <expression>* %% ',' ')'
 	}
 
 	rule locator {
