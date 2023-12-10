@@ -89,16 +89,24 @@ grammar Lol {
 
 	rule expression {
 		| <bin-op>
-		| <method-call>
-		| <expression-part>
+		| <method-call-level-expr>
 	}
 
 	rule bin-op {
-		<expression-part> <bin-operator> <expression>
+		<method-call-level-expr> <bin-operator> <expression>
 	}
 
 	token bin-operator {
 		'+' | '==' | "!=" | "<" | "<=" | ">" | ">="
+	}
+
+	rule method-call-level-expr {
+		| <method-call>
+		| <expression-part>
+	}
+
+	rule method-call {
+		<expression-part> '!' <identifier> <type-params>? '(' <expression>* %% ',' ')'
 	}
 
 	rule expression-part {
@@ -120,10 +128,6 @@ grammar Lol {
 
 	rule func-call {
 		<identifier> <type-params>? '(' <expression>* %% ',' ')'
-	}
-
-	rule method-call {
-		<expression-part> '!' <identifier> <type-params>? '(' <expression>* %% ',' ')'
 	}
 
 	rule locator {
@@ -1296,31 +1300,8 @@ class Program {
 		$dest-type;
 	}
 
-	method compile-expr($frame, $expr, Buf $out, %aliases) returns LocalLocation {
-		CATCH {
-			die "{.Str}\n  in expr: ({$expr.Str})";
-		}
-
-		if $expr<bin-op> {
-			my $operator = $expr<bin-op><bin-operator>.Str;
-			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out, %aliases);
-			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases);
-			if $lhs.temp {
-				my $type = $.compile-bin-op($lhs.index, $lhs, $rhs, $operator, $out);
-				$frame.pop-if-temp($rhs);
-				$frame.change-type($lhs, $type);
-				$lhs;
-			} elsif $rhs.temp {
-				my $type = $.compile-bin-op($rhs.index, $lhs, $rhs, $operator, $out);
-				$frame.change-type($rhs, $type);
-				$rhs;
-			} else {
-				my $var = $frame.push-temp(%builtin-types<void>);
-				my $type = $.compile-bin-op($rhs.index, $lhs, $rhs, $operator, $out);
-				$frame.change-type($var, $type);
-				$var;
-			}
-		} elsif $expr<method-call> {
+	method compile-method-call-level-expr($frame, $expr, Buf $out, %aliases) returns LocalLocation {
+		if $expr<method-call> {
 			my $type = $.get-expr-part-type($frame, $expr<method-call><expression-part>, %aliases);
 			if $type.isa(PointerType) {
 				$type = $type.pointee;
@@ -1349,7 +1330,7 @@ class Program {
 					my $part = $expr<method-call><expression-part>;
 					$var = $.compile-expr-part($frame, $part, $out, %aliases);
 				} else {
-					my $e = $expr<func-call><expression>[$i];
+					my $e = $expr<method-call><expression>[$i];
 					$var = $.compile-expr($frame, $e, $out, %aliases);
 				}
 
@@ -1393,6 +1374,49 @@ class Program {
 		}
 	}
 
+	method compile-method-call-level-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out, %aliases) {
+		if $expr<expression-part> {
+			$.compile-expr-part-to-loc($frame, $dest, $expr<expression-part>, $out, %aliases);
+		} else {
+			my $src = $.compile-method-call-level-expr($frame, $expr, $out, %aliases);
+			my $type = $.reconcile-types($dest.type, $src.type);
+			$.generate-copy($dest.index, $src.index, $type.size, $out);
+			$frame.pop-if-temp($src);
+		}
+	}
+
+	method compile-expr($frame, $expr, Buf $out, %aliases) returns LocalLocation {
+		CATCH {
+			die "{.Str}\n  in expr: ({$expr.Str})";
+		}
+
+		if $expr<bin-op> {
+			my $operator = $expr<bin-op><bin-operator>.Str;
+			my $lhs = $.compile-method-call-level-expr(
+				$frame, $expr<bin-op><method-call-level-expr>, $out, %aliases);
+			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases);
+			if $lhs.temp {
+				my $type = $.compile-bin-op($lhs.index, $lhs, $rhs, $operator, $out);
+				$frame.pop-if-temp($rhs);
+				$frame.change-type($lhs, $type);
+				$lhs;
+			} elsif $rhs.temp {
+				my $type = $.compile-bin-op($rhs.index, $lhs, $rhs, $operator, $out);
+				$frame.change-type($rhs, $type);
+				$rhs;
+			} else {
+				my $var = $frame.push-temp(%builtin-types<void>);
+				my $type = $.compile-bin-op($rhs.index, $lhs, $rhs, $operator, $out);
+				$frame.change-type($var, $type);
+				$var;
+			}
+		} elsif $expr<method-call-level-expr> {
+			$.compile-method-call-level-expr($frame, $expr<method-call-level-expr>, $out, %aliases);
+		} else {
+			die "Bad expression '$expr'";
+		}
+	}
+
 	method compile-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out, %aliases) {
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
@@ -1406,13 +1430,11 @@ class Program {
 
 			$frame.pop-if-temp($rhs);
 			$frame.pop-if-temp($lhs);
-		} elsif $expr<expression-part> {
-			$.compile-expr-part-to-loc($frame, $dest, $expr<expression-part>, $out, %aliases);
+		} elsif $expr<method-call-level-expr> {
+			$.compile-method-call-level-expr-to-loc(
+				$frame, $dest, $expr<method-call-level-expr>, $out, %aliases);
 		} else {
-			my $src = $.compile-expr($frame, $expr, $out, %aliases);
-			my $type = $.reconcile-types($dest.type, $src.type);
-			$.generate-copy($dest.index, $src.index, $type.size, $out);
-			$frame.pop-if-temp($src);
+			die "Bad expression '$expr'";
 		}
 	}
 
@@ -1491,7 +1513,7 @@ class Program {
 		}
 
 		if $statm<block> {
-			$.compile-block($frame, $statm<block>, $out);
+			$.compile-block($frame, $statm<block>, $out, %aliases);
 		} elsif $statm<dbg-print-statm> {
 			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out, %aliases);
 			if $var.type === %builtin-types<bool> {
@@ -1535,7 +1557,7 @@ class Program {
 			$out.append(0, 0);
 			$frame.pop-if-temp($cond-var);
 
-			$.compile-statm($frame, $statm<if-statm><statement>, $out);
+			$.compile-statm($frame, $statm<if-statm><statement>, $out, %aliases);
 
 			if $statm<if-statm>[0] {
 				my $else-start-idx = +$out;
@@ -1545,7 +1567,7 @@ class Program {
 
 				$out.write-int16($fixup-skip-if-body-idx, +$out - $if-start-idx, LittleEndian);
 
-				$.compile-statm($frame, $statm<if-statm>[0]<statement>, $out);
+				$.compile-statm($frame, $statm<if-statm>[0]<statement>, $out, %aliases);
 				$out.write-int16($fixup-skip-else-body-idx, +$out - $else-start-idx, LittleEndian);
 			} else {
 				$out.write-int16($fixup-skip-if-body-idx, +$out - $if-start-idx, LittleEndian);
@@ -1560,7 +1582,7 @@ class Program {
 			append-i16le($out, 0);
 			$frame.pop-if-temp($cond-var);
 
-			$.compile-statm($frame, $statm<while-statm><statement>, $out);
+			$.compile-statm($frame, $statm<while-statm><statement>, $out, %aliases);
 
 			my $jump-back-delta = $while-start-idx - +$out;
 			$out.append(LolOp::BRANCH);
