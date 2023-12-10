@@ -7,6 +7,7 @@ grammar Lol {
 
 	rule toplevel {
 		| <struct-decl>
+		| <method-decl>
 		| <func-decl>
 	}
 
@@ -28,6 +29,10 @@ grammar Lol {
 
 	rule struct-field {
 		<type> <identifier>
+	}
+
+	rule method-decl {
+		<type> <identifier> '::' <identifier> <formal-type-params>? '(' <formal-params> ')' <block>
 	}
 
 	rule func-decl {
@@ -84,6 +89,7 @@ grammar Lol {
 
 	rule expression {
 		| <bin-op>
+		| <method-call>
 		| <expression-part>
 	}
 
@@ -114,6 +120,10 @@ grammar Lol {
 
 	rule func-call {
 		<identifier> <type-params>? '(' <expression>* %% ',' ')'
+	}
+
+	rule method-call {
+		<expression-part> ':' <identifier> <type-params>? '(' <expression>* %% ',' ')'
 	}
 
 	rule locator {
@@ -241,27 +251,6 @@ class Type {
 	has Str $.name;
 }
 
-class PrimitiveType is Type {
-}
-
-class StructField {
-	has Int $.offset;
-	has Type $.type;
-}
-
-class StructType is Type {
-	has StructField %.fields;
-}
-
-class PointerType is Type {
-	has Type $.pointee;
-}
-
-class ArrayType is Type {
-	has Type $.elem;
-	has Int $.elem-count;
-}
-
 class Location {
 	has Type $.type is rw;
 }
@@ -290,6 +279,30 @@ class FuncDecl {
 	has %.aliases;
 
 	has Int $.offset is rw = Nil;
+}
+
+class PrimitiveType is Type {
+}
+
+class StructField {
+	has Int $.offset;
+	has Type $.type;
+}
+
+class StructType is Type {
+	has StructField %.fields;
+	has %.aliases;
+	has FuncDecl %.methods;
+	has %.method-templates;
+}
+
+class PointerType is Type {
+	has Type $.pointee;
+}
+
+class ArrayType is Type {
+	has Type $.elem;
+	has Int $.elem-count;
 }
 
 my %builtin-types = %(
@@ -402,11 +415,9 @@ class FuncCallFixup {
 class Program {
 	has Type %.types;
 	has %.struct-templates;
-	has FuncDecl @.funcs;
-	has FuncDecl %.funcs-map;
+	has FuncDecl %.funcs;
 	has %.func-templates;
 	has FuncDecl @.materialized-func-templates;
-	has FuncDecl %.materialized-func-templates-map;
 
 	has FuncCallFixup @.func-call-fixups;
 	has FuncCallFixup @.func-template-call-fixups;
@@ -474,7 +485,7 @@ class Program {
 			die "'{$name}' expects {+@formal-params} type parameters, got {+@params}";
 		}
 
-		my %new-aliases = %aliases.clone();
+		my %new-aliases = %();
 		for @formal-params Z @params -> ($formal-param, $param) {
 			%new-aliases{$formal-param<identifier>.Str} = $param
 		}
@@ -498,6 +509,9 @@ class Program {
 
 		my $type = StructType.new(
 			fields => %fields,
+			aliases => %new-aliases,
+			methods => %(),
+			method-templates => %(),
 			size => $size,
 			name => "$name",
 		);
@@ -621,8 +635,11 @@ class Program {
 
 		%.types{$name} = StructType.new(
 			fields => %fields,
+			aliases => %(),
+			methods => %(),
+			method-templates => %(),
 			size => $size,
-			name => "struct $name",
+			name => "$name",
 		);
 	}
 
@@ -655,7 +672,7 @@ class Program {
 
 	method analyze-func-decl($func-decl-cst) {
 		my $name = $func-decl-cst<identifier>.Str;
-		if $.funcs{$name}:exists {
+		if %.funcs{$name}:exists {
 			die "A function named $name already exists!";
 		}
 
@@ -669,8 +686,34 @@ class Program {
 		}
 
 		my $func = $.create-func-decl($name, $func-decl-cst, %());
-		@.funcs.append($func);
-		%.funcs-map{$name} = $func;
+		%.funcs{$name} = $func;
+	}
+
+	method analyze-method-decl($method-decl-cst) {
+		my $struct-name = $method-decl-cst<identifier>[0].Str;
+		my $method-name = $method-decl-cst<identifier>[1].Str;
+
+		if not %.types{$struct-name} {
+			die "Declared method on unknown type '$struct-name'"
+		}
+
+		my $struct = %.types{$struct-name};
+		if not $struct.isa(StructType) {
+			die "Declared method on non-struct type '{$struct.name}'";
+		}
+
+		if $struct.methods{$method-name}:exists {
+			die "Method '$method-name' already exists on '{$struct.name}'";
+		}
+
+		if $method-decl-cst<formal-type-params>:exists {
+			die "TODO: methods on struct templates";
+		}
+
+		my $name = $struct.name ~ "::" ~ $method-name;
+		my $func = $.create-func-decl($name, $method-decl-cst, %());
+		$struct.methods{$method-name} = $func;
+		%.funcs{$name} = $func;
 	}
 
 	method analyze($cst) {
@@ -679,6 +722,8 @@ class Program {
 				$.analyze-struct-decl($toplevel<struct-decl>);
 			} elsif $toplevel<func-decl> {
 				$.analyze-func-decl($toplevel<func-decl>);
+			} elsif $toplevel<method-decl> {
+				$.analyze-method-decl($toplevel<method-decl>);
 			} else {
 				die "Bad toplevel $toplevel";
 			}
@@ -839,12 +884,12 @@ class Program {
 	method resolve-func-decl($func-call-cst, %aliases) returns FuncDecl {
 		my $name = $func-call-cst<identifier>.Str;
 
-		if %.funcs-map{$name} {
+		if %.funcs{$name} {
 			if $func-call-cst<actual-type-params>:exists {
 				die "Type parameters provided to non-template function";
 			}
 
-			return %.funcs-map{$name};
+			return %.funcs{$name};
 		} elsif %.func-templates{$name} {
 			if not $func-call-cst<type-params>:exists {
 				die "No type parameters provided for template function";
@@ -869,8 +914,8 @@ class Program {
 			}
 			$name ~= "]";
 
-			if %.materialized-func-templates-map{$name} {
-				return %.materialized-func-templates-map{$name};
+			if %.materialized-func-templates{$name} {
+				return %.materialized-func-templates{$name};
 			}
 
 			my @formal-params = $func-decl-cst<formal-type-params><formal-type-param>;
@@ -885,8 +930,7 @@ class Program {
 			}
 
 			my $func = $.create-func-decl($name, $func-decl-cst, %new-aliases);
-			@.materialized-func-templates.append($func);
-			%.materialized-func-templates-map{$name} = $func;
+			%.materialized-func-templates{$name} = $func;
 			$func;
 		} else {
 			die "Unknown function: {$name}";
@@ -1076,6 +1120,12 @@ class Program {
 		}
 	}
 
+	method get-expr-part-type($frame, $part, %aliases) returns Type {
+		my $var = $.compile-expr-part($frame, $part, Buf.new(), %aliases);
+		$frame.pop-if-temp($var);
+		$var.type;
+	}
+
 	# dest can alias lhs or rhs.
 	method compile-bin-op(
 		Int $dest, LocalLocation $lhs, LocalLocation $rhs, Str $operator, Buf $out
@@ -1247,9 +1297,9 @@ class Program {
 	}
 
 	method compile-expr($frame, $expr, Buf $out, %aliases) returns LocalLocation {
-#		CATCH {
-#			die "{.Str}\n  in expr: ({$expr.Str})";
-#		}
+		CATCH {
+			die "{.Str}\n  in expr: ({$expr.Str})";
+		}
 
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
@@ -1270,6 +1320,72 @@ class Program {
 				$frame.change-type($var, $type);
 				$var;
 			}
+		} elsif $expr<method-call> {
+			my $type = $.get-expr-part-type($frame, $expr<method-call><expression-part>, %aliases);
+			if $type.isa(PointerType) {
+				$type = $type.pointee;
+			}
+
+			if not $type.isa(StructType) {
+				die "Method call on non-struct type '{$type.name}'";
+			}
+
+			my $method-name = $expr<method-call><identifier>.Str;
+			if not $type.methods{$method-name} {
+				die "Method '$method-name' doesn't exist on '{$type.name}'";
+			}
+
+			my $func = $type.methods{$method-name};
+
+			my $return-val = $frame.push-temp($func.return-var.type);
+			my $stack-bump = $frame.idx;
+			my @param-vars;
+			for 0..^+$func.formal-params -> $i {
+				my $param = $func.formal-params[$i];
+				$stack-bump += $param.type.size;
+
+				my $var;
+				if $i == 0 {
+					my $part = $expr<method-call><expression-part>;
+					$var = $.compile-expr-part($frame, $part, $out, %aliases);
+				} else {
+					my $e = $expr<func-call><expression>[$i];
+					$var = $.compile-expr($frame, $e, $out, %aliases);
+				}
+
+				if not ($var.type === $param.type) {
+					die "Method call with invalid parameter type: " ~
+						"Expected '{$param.type.name}', got '{$var.type.name}'";
+				}
+
+				if $var.temp {
+					@param-vars.append($var);
+				} else {
+					my $v = $frame.push-temp($var.type);
+					$.generate-copy($v.index, $var.index, $var.type.size, $out);
+					@param-vars.append($v);
+				}
+			}
+
+			$out.append(LolOp::CALL);
+			append-i16le($out, $stack-bump);
+
+			if $func.offset.defined {
+				append-u32le($out, $func.offset);
+			} else {
+				$.func-call-fixups.append(FuncCallFixup.new(
+					location => +$out,
+					name => $func.name,
+				));
+				append-u32le($out, 0);
+			}
+
+			while @param-vars {
+				my $var = @param-vars.pop();
+				$frame.pop-if-temp($var);
+			}
+
+			$return-val;
 		} elsif $expr<expression-part> {
 			$.compile-expr-part($frame, $expr<expression-part>, $out, %aliases);
 		} else {
@@ -1298,6 +1414,12 @@ class Program {
 			$.generate-copy($dest.index, $src.index, $type.size, $out);
 			$frame.pop-if-temp($src);
 		}
+	}
+
+	method get-expr-type($frame, $expr, %aliases) returns Type {
+		my $var = $.compile-expr($frame, $expr, Buf.new(), %aliases);
+		$frame.pop-if-temp($var);
+		$var.type;
 	}
 
 	method generate-copy(Int $dest, Int $src, Int $size, Buf $out) {
@@ -1364,9 +1486,9 @@ class Program {
 	}
 
 	method compile-statm($frame, $statm, Buf $out, %aliases) {
-#		CATCH {
-#			die "{.Str}\n  in statm: {$statm.Str}\n";
-#		}
+		CATCH {
+			die "{.Str}\n  in statm: {$statm.Str}\n";
+		}
 
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out);
@@ -1534,11 +1656,11 @@ class Program {
 	}
 
 	method compile-functions(Buf $out) {
-		if not %.funcs-map<main>:exists {
+		if not %.funcs<main>:exists {
 			die "Missing main function";
 		}
 
-		my $main-func = %.funcs-map<main>;
+		my $main-func = %.funcs<main>;
 		if not ($main-func.return-var.type === %builtin-types<void>) {
 			die "Function main must have return type void";
 		} elsif +$main-func.formal-params != 0 {
@@ -1552,10 +1674,10 @@ class Program {
 		while +@.func-call-fixups > 0 {
 			my $fixup = @.func-call-fixups.pop();
 			my $func;
-			if %.funcs-map{$fixup.name} {
-				$func = %.funcs-map{$fixup.name};
-			} elsif %.materialized-func-templates-map{$fixup.name} {
-				$func = %.materialized-func-templates-map{$fixup.name};
+			if %.funcs{$fixup.name} {
+				$func = %.funcs{$fixup.name};
+			} elsif %.materialized-func-templates{$fixup.name} {
+				$func = %.materialized-func-templates{$fixup.name};
 			}
 
 			if not $func.offset.defined {
