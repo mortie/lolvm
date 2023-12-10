@@ -711,7 +711,7 @@ class Program {
 		}
 
 		my $name = $struct.name ~ "::" ~ $method-name;
-		my $func = $.create-func-decl($name, $method-decl-cst, %());
+		my $func = $.create-func-decl($name, $method-decl-cst, %(self => $struct));
 		$struct.methods{$method-name} = $func;
 		%.funcs{$name} = $func;
 	}
