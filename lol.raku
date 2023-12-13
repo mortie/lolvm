@@ -84,7 +84,7 @@ grammar Lol {
 	}
 
 	rule assign-statm {
-		<locator> '=' <expression>
+		<expression> '=' <expression>
 	}
 
 	rule expression {
@@ -108,31 +108,6 @@ grammar Lol {
 		<expression-part> '!' <identifier> <type-params>? '(' <expression>* %% ',' ')'
 	}
 
-	rule expression-part {
-		| <uninitialized>
-		| <num-literal>
-		| <bool-literal>
-		| <group-expression>
-		| <func-call>
-		| <locator>
-	}
-
-	rule uninitialized {
-		'uninitialized' <type>
-	}
-
-	rule group-expression {
-		'(' <expression> ')'
-	}
-
-	rule func-call {
-		<identifier> <type-params>? '(' <expression>* %% ',' ')'
-	}
-
-	rule locator {
-		<identifier> <locator-suffix>*
-	}
-
 	rule locator-suffix {
 		<locator-dereference> | <locator-member> | <locator-reference>
 	}
@@ -147,6 +122,27 @@ grammar Lol {
 
 	rule locator-reference {
 		'&'
+	}
+
+	rule expression-part {
+		| <uninitialized>
+		| <num-literal>
+		| <bool-literal>
+		| <group-expression>
+		| <func-call>
+		| <identifier>
+	}
+
+	rule uninitialized {
+		'uninitialized' <type>
+	}
+
+	rule group-expression {
+		'(' <expression> ')'
+	}
+
+	rule func-call {
+		<identifier> <type-params>? '(' <expression>* %% ',' ')'
 	}
 
 	rule type {
@@ -249,9 +245,75 @@ enum LolOp <
 	HALT
 >;
 
+sub generate-copy(Int $dest, Int $src, Int $size, Buf $out) {
+	if $size == 1 {
+		$out.append(LolOp::COPY_8);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} elsif $size == 4 {
+		$out.append(LolOp::COPY_32);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} elsif $size == 8 {
+		$out.append(LolOp::COPY_64);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} else {
+		$out.append(LolOp::COPY_N);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+		append-u32le($out, $size);
+	}
+}
+
+sub generate-load(Int $dest, Int $src, Int $size, Buf $out) {
+	if $size == 1 {
+		$out.append(LolOp::LOAD_8);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} elsif $size == 4 {
+		$out.append(LolOp::LOAD_32);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} elsif $size == 8 {
+		$out.append(LolOp::LOAD_64);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} else {
+		$out.append(LolOp::LOAD_N);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+		append-u32le($out, $size);
+	}
+}
+
+sub generate-store(Int $dest, Int $src, Int $size, Buf $out) {
+	if $size == 1 {
+		$out.append(LolOp::STORE_8);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} elsif $size == 4 {
+		$out.append(LolOp::STORE_32);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} elsif $size == 8 {
+		$out.append(LolOp::STORE_64);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+	} else {
+		$out.append(LolOp::STORE_N);
+		append-i16le($out, $dest);
+		append-i16le($out, $src);
+		append-u32le($out, $size);
+	}
+}
+
 class Type {
 	has Int $.size;
 	has Str $.name;
+}
+
+class PrimitiveType is Type {
 }
 
 class Location {
@@ -262,18 +324,8 @@ class LocalLocation is Location {
 	has Int $.index;
 	has Bool $.temp is rw;
 
-	method materialize(Buf $out) returns LocalLocation {
-		$;
-	}
-}
-
-class DereferenceLocation is Location {
-	has LocalLocation $.local;
-	has Int $.offset is rw;
-	has Bool $.dereference-in-place;
-
-	method materialize(Buf $out) returns LocalLocation {
-		die "Oh no I don't know how to do this";
+	method materialize($frame, Buf $out) returns LocalLocation {
+		self;
 	}
 }
 
@@ -290,9 +342,6 @@ class FuncDecl {
 	has %.aliases;
 
 	has Int $.offset is rw = Nil;
-}
-
-class PrimitiveType is Type {
 }
 
 class StructField {
@@ -314,6 +363,38 @@ class PointerType is Type {
 class ArrayType is Type {
 	has Type $.elem;
 	has Int $.elem-count;
+}
+
+class DereferenceLocation is Location {
+	has LocalLocation $.local;
+	has Int $.offset is rw;
+
+	method materialize($frame, Buf $out) returns LocalLocation {
+		if not $.local.type.isa(PointerType) {
+			die "Can't materialize dereference of non-pointer type";
+		}
+
+		my $temp;
+		if $.local.temp {
+			$temp = $.local.temp;
+		} else {
+			$temp = $frame.push-temp($.local.type.pointee);
+		}
+
+		if $.offset != 0 {
+			$out.append(LolOp::ADDI_64);
+			append-i16le($out, $temp.index);
+			append-i16le($out, $.local.index);
+			append-u64le($out, $.offset);
+			generate-load($temp.index, $temp.index, $.local.type.pointee.size, $out);
+			$frame.change-type($temp, $.local.type.pointee);
+		} else {
+			generate-load($temp.index, $.local.index, $.local.type.pointee.size, $out);
+			$frame.change-type($temp, $.local.type.pointee);
+		}
+
+		$temp;
+	}
 }
 
 my %builtin-types = %(
@@ -368,7 +449,11 @@ class StackFrame {
 	}
 
 	method pop-if-temp(Location $var) {
-		if $var.isa(LocalLocation) and $var.temp {
+		if $var.isa(LocalLocation) {
+			if not $var.temp {
+				return;
+			}
+
 			my $popped-var = @.temps.pop();
 			if not ($var === $popped-var) {
 				die "Popped non-top-of-stack '{$var.type.name}' variable at index {$var.index} " ~
@@ -805,7 +890,6 @@ class Program {
 					type => $var.type.pointee,
 					local => $var,
 					offset => 0,
-					dereference-in-place => False,
 				);
 			} elsif $suffix<locator-dereference> and $location.isa(DereferenceLocation) {
 				$i += 1;
@@ -839,7 +923,6 @@ class Program {
 					type => $location.type.pointee,
 					local => $location-local,
 					offset => 0,
-					dereference-in-place => True,
 				);
 			} elsif $suffix<locator-member> and $location.isa(DereferenceLocation) {
 				$i += 1;
@@ -1032,7 +1115,7 @@ class Program {
 					@param-vars.append($var);
 				} else {
 					my $v = $frame.push-temp($var.type);
-					$.generate-copy($v.index, $var.index, $var.type.size, $out);
+					generate-copy($v.index, $var.index, $var.type.size, $out);
 					@param-vars.append($v);
 				}
 			}
@@ -1056,46 +1139,8 @@ class Program {
 			}
 
 			$return-val;
-		} elsif $part<locator> {
-			my $var = $.locate-by-locator($frame, $part<locator>, $out);
-			if $var.isa(LocalLocation) {
-				$var;
-			} elsif $var.isa(DereferenceLocation) {
-				my $local = $var.local;
-				if $var.dereference-in-place {
-					if $var.offset != 0 {
-						$out.append(LolOp::ADDI_64);
-						append-i16le($out, $local.index);
-						append-i16le($out, $local.index);
-						append-u64le($out, $var.offset);
-					}
-
-					$.generate-load($local.index, $local.index, $var.type.size, $out);
-					my $size-diff = $var.type.size - $local.type.size;
-
-					$local.type = $var.type;
-					$frame.idx += $size-diff;
-					$local;
-				} else {
-					my $temp = $frame.push-temp($var.type);
-
-					if $var.offset == 0 {
-						$.generate-load($temp.index, $local.index, $temp.type.size, $out);
-					} else {
-						my $ptr-var = $frame.push-temp($local.type);
-						$out.append(LolOp::ADDI_64);
-						append-i16le($out, $ptr-var.index);
-						append-i16le($out, $local.index);
-						append-u64le($out, $var.offset);
-						$.generate-load($temp.index, $ptr-var.index, $temp.type.size, $out);
-						$frame.pop-if-temp($ptr-var);
-					}
-
-					$temp;
-				}
-			} else {
-				die "Bad location";
-			}
+		} elsif $part<identifier> {
+			$frame.get($part<identifier>.Str);
 		} else {
 			die "Bad expression '$part'";
 		}
@@ -1128,9 +1173,10 @@ class Program {
 				die "Bad bool '{$part<bool-literal>}'";
 			}
 		} else {
-			my $src = $.compile-expr-part($frame, $part, $out, %aliases).materialize($out);
+			my $src = $.compile-expr-part($frame, $part, $out, %aliases)
+				.materialize($frame, $out);
 			my $type = $.reconcile-types($dest.type, $src.type);
-			$.generate-copy($dest.index, $src.index, $type.size, $out);
+			generate-copy($dest.index, $src.index, $type.size, $out);
 			$frame.pop-if-temp($src);
 		}
 	}
@@ -1341,10 +1387,12 @@ class Program {
 				my $var;
 				if $i == 0 {
 					my $part = $expr<method-call><expression-part>;
-					$var = $.compile-expr-part($frame, $part, $out, %aliases).materialize($out);
+					$var = $.compile-expr-part($frame, $part, $out, %aliases)
+						.materialize($frame, $out);
 				} else {
 					my $e = $expr<method-call><expression>[$i];
-					$var = $.compile-expr($frame, $e, $out, %aliases).materialize($out);
+					$var = $.compile-expr($frame, $e, $out, %aliases)
+						.materialize($frame, $out);
 				}
 
 				if not ($var.type === $param.type) {
@@ -1356,7 +1404,7 @@ class Program {
 					@param-vars.append($var);
 				} else {
 					my $v = $frame.push-temp($var.type);
-					$.generate-copy($v.index, $var.index, $var.type.size, $out);
+					generate-copy($v.index, $var.index, $var.type.size, $out);
 					@param-vars.append($v);
 				}
 			}
@@ -1388,8 +1436,30 @@ class Program {
 
 		for $mcexpr<locator-suffix> -> $suffix {
 			if $suffix<locator-dereference> {
-				if not $var.isa(PointerType) {
-					die "Dereference of non-pointer type '{$var.type.name}';
+				if not $var.type.isa(PointerType) {
+					die "Dereference of non-pointer type '{$var.type.name}'";
+				}
+
+				my $local = $var.materialize($frame, $out);
+				$var = DereferenceLocation.new(
+					local => $var.materialize($frame, $out),
+					offset => 0,
+					local => $local,
+					type => $var.type.pointee,
+				);
+			} elsif $suffix<locator-reference> {
+				if $var.isa(LocalLocation) {
+					if $var.temp {
+						die "Refusing to take the reference of a temporary";
+					}
+
+					my $temp = $frame.push-temp($.get-pointer-type-to($var.type));
+					$out.append(LolOp::REF);
+					append-i16le($out, $temp.index);
+					append-i16le($out, $var.index);
+					$var = $temp;
+				} else {
+					die "Can't take reference of non-local yet";
 				}
 			} else {
 				die "Bad suffix: $suffix";
@@ -1405,22 +1475,23 @@ class Program {
 		} else {
 			my $src = $.compile-method-call-level-expr($frame, $expr, $out, %aliases);
 			my $type = $.reconcile-types($dest.type, $src.type);
-			$.generate-copy($dest.index, $src.index, $type.size, $out);
+			generate-copy($dest.index, $src.index, $type.size, $out);
 			$frame.pop-if-temp($src);
 		}
 	}
 
 	method compile-expr($frame, $expr, Buf $out, %aliases) returns Location {
-		CATCH {
-			die "{.Str}\n  in expr: ({$expr.Str})";
-		}
+#		CATCH {
+#			die "{.Str}\n  in expr: ({$expr.Str})";
+#		}
 
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
 			my $lhs = $.compile-method-call-level-expr(
-				$frame, $expr<bin-op><method-call-level-expr>, $out, %aliases).materialize($out);
-			my $rhs = $.compile-expr(
-				$frame, $expr<bin-op><expression>, $out, %aliases).materialize($out);
+				$frame, $expr<bin-op><method-call-level-expr>, $out, %aliases)
+					.materialize($frame, $out);
+			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases)
+				.materialize($frame, $out);
 			if $lhs.temp {
 				my $type = $.compile-bin-op($lhs.index, $lhs, $rhs, $operator, $out);
 				$frame.pop-if-temp($rhs);
@@ -1446,10 +1517,10 @@ class Program {
 	method compile-expr-to-loc($frame, LocalLocation $dest, $expr, Buf $out, %aliases) {
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
-			my $lhs = $.compile-expr-part(
-				$frame, $expr<bin-op><expression-part>, $out, %aliases).materialize($out);
-			my $rhs = $.compile-expr(
-				$frame, $expr<bin-op><expression>, $out, %aliases).materialize($out);
+			my $lhs = $.compile-expr-part($frame, $expr<bin-op><expression-part>, $out, %aliases)
+				.materialize($frame, $out);
+			my $rhs = $.compile-expr($frame, $expr<bin-op><expression>, $out, %aliases)
+				.materialize($frame, $out);
 
 			my $type = $.compile-bin-op($dest.index, $lhs, $rhs, $operator, $out);
 			if not ($type === $dest.type) {
@@ -1472,78 +1543,16 @@ class Program {
 		$var.type;
 	}
 
-	method generate-copy(Int $dest, Int $src, Int $size, Buf $out) {
-		if $size == 1 {
-			$out.append(LolOp::COPY_8);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} elsif $size == 4 {
-			$out.append(LolOp::COPY_32);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} elsif $size == 8 {
-			$out.append(LolOp::COPY_64);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} else {
-			$out.append(LolOp::COPY_N);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-			append-u32le($out, $size);
-		}
-	}
-
-	method generate-load(Int $dest, Int $src, Int $size, Buf $out) {
-		if $size == 1 {
-			$out.append(LolOp::LOAD_8);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} elsif $size == 4 {
-			$out.append(LolOp::LOAD_32);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} elsif $size == 8 {
-			$out.append(LolOp::LOAD_64);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} else {
-			$out.append(LolOp::LOAD_N);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-			append-u32le($out, $size);
-		}
-	}
-
-	method generate-store(Int $dest, Int $src, Int $size, Buf $out) {
-		if $size == 1 {
-			$out.append(LolOp::STORE_8);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} elsif $size == 4 {
-			$out.append(LolOp::STORE_32);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} elsif $size == 8 {
-			$out.append(LolOp::STORE_64);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-		} else {
-			$out.append(LolOp::STORE_N);
-			append-i16le($out, $dest);
-			append-i16le($out, $src);
-			append-u32le($out, $size);
-		}
-	}
-
 	method compile-statm($frame, $statm, Buf $out, %aliases) {
-		CATCH {
-			die "{.Str}\n  in statm: {$statm.Str}\n";
-		}
+#		CATCH {
+#			die "{.Str}\n  in statm: {$statm.Str}\n";
+#		}
 
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out, %aliases);
 		} elsif $statm<dbg-print-statm> {
-			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out, %aliases);
+			my $var = $.compile-expr($frame, $statm<dbg-print-statm><expression>, $out, %aliases)
+				.materialize($frame, $out);
 			if $var.type === %builtin-types<bool> {
 				$out.append(LolOp::DBG_PRINT_U8);
 			} elsif $var.type === %builtin-types<int> {
@@ -1631,10 +1640,10 @@ class Program {
 					die "Got declare assign statement while there are temporaries?";
 				}
 
-				my $var = $.compile-expr($frame, $expr, $out, %aliases);
+				my $var = $.compile-expr($frame, $expr, $out, %aliases).materialize($frame, $out);
 				if not $var.temp {
 					my $new-var = $frame.push-temp($var.type);
-					$.generate-copy($new-var.index, $var.index, $var.type, $out);
+					generate-copy($new-var.index, $var.index, $var.type.size, $out);
 					$var = $new-var;
 				}
 
@@ -1644,9 +1653,13 @@ class Program {
 				$var;
 			}
 		} elsif $statm<assign-statm> {
-			my $var = $.locate-by-locator($frame, $statm<assign-statm><locator>, $out);
+			my $var = $.compile-expr($frame, $statm<assign-statm><expression>[0], $out);
 			my $expr = $statm<assign-statm><expression>;
 			if $var.isa(LocalLocation) {
+				if $var.temp {
+					die "Can't assign to temporary location";
+				}
+
 				$.compile-expr-to-loc($frame, $var, $expr, $out, %aliases);
 			} elsif $var.isa(DereferenceLocation) {
 				my $temp = $.compile-expr($frame, $expr, $out, %aliases);
@@ -1659,12 +1672,14 @@ class Program {
 					append-i16le($out, $temp-ptr.index);
 					append-i16le($out, $var.local.index);
 					append-u32le($out, $var.offset);
-					$.generate-store($temp-ptr.index, $temp.index, $var.type.size, $out);
+					generate-store($temp-ptr.index, $temp.index, $var.type.size, $out);
 					$frame.pop-if-temp($temp-ptr);
 				} else {
-					$.generate-store($var.local.index, $temp.index, $var.type.size, $out);
+					generate-store($var.local.index, $temp.index, $var.type.size, $out);
 				}
 				$frame.pop-if-temp($temp);
+			} else {
+				die "Bad location type '$var'";
 			}
 		} elsif $statm<expression> {
 			my $var = $.compile-expr($frame, $statm<expression>, $out, %aliases);

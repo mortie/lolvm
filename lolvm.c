@@ -127,7 +127,7 @@ size_t pretty_print_instruction(unsigned char *instr)
 		printf("SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
 		return 6;
 	case LOL_SETI_64:
-		printf("SETI_64 @%i, %llu\n", OP_OFFSET(0), OP_U64(2));
+		printf("SETI_64 @%i, %lu\n", OP_OFFSET(0), OP_U64(2));
 		return 10;
 
 	case LOL_COPY_8:
@@ -166,7 +166,7 @@ size_t pretty_print_instruction(unsigned char *instr)
 		printf("ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 	case LOL_ADDI_64:
-		printf("ADDI_64 @%i, @%i, %llu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
+		printf("ADDI_64 @%i, @%i, %lu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
 		return 12;
 
 	case LOL_EQ_8:
