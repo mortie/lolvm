@@ -128,8 +128,9 @@ grammar Lol {
 		| <uninitialized>
 		| <num-literal>
 		| <bool-literal>
-		| <group-expression>
 		| <func-call>
+		| <brace-initializer>
+		| <group-expression>
 		| <identifier>
 	}
 
@@ -137,12 +138,33 @@ grammar Lol {
 		'uninitialized' <type>
 	}
 
-	rule group-expression {
-		'(' <expression> ')'
-	}
-
 	rule func-call {
 		<identifier> <type-params>? '(' <expression>* %% ',' ')'
+	}
+
+	rule brace-initializer {
+		<type> <initializer-list>
+	}
+
+	rule initializer-list {
+		| <sequence-initializer-list>
+		| <designated-initializer-list>
+	}
+
+	rule sequence-initializer-list {
+		'{' <expression>* %% ',' '}'
+	}
+
+	rule designated-initializer-list {
+		'{' <designated-initializer>* %% ',' '}'
+	}
+
+	rule designated-initializer {
+		<identifier> ':' <expression>
+	}
+
+	rule group-expression {
+		'(' <expression> ')'
 	}
 
 	rule type {
@@ -352,6 +374,7 @@ class StructField {
 
 class StructType is Type {
 	has StructField %.fields;
+	has StructField @.field-list;
 	has %.aliases;
 	has FuncDecl %.methods;
 	has %.method-templates;
@@ -449,7 +472,7 @@ class StackFrame {
 		$var;
 	}
 
-	method pop-if-temp(Location $var) {
+	method pop-if-temp(Location $var is rw) {
 		if $var.isa(LocalLocation) {
 			if not $var.temp {
 				return;
@@ -548,15 +571,15 @@ class Program {
 		}
 	}
 
-	method get-array-type(Type $elem, Int $size) {
-		my $name = "array[{$elem.name},$size]";
+	method get-array-type(Type $elem, Int $count) {
+		my $name = "array[{$elem.name},$count]";
 		if %.types{$name}:exists {
 			%.types{$name};
 		} else {
 			my $type = ArrayType.new(
 				elem => $elem,
-				elem-size => $size,
-				size => $elem.size * $size,
+				elem-count => $count,
+				size => $elem.size * $count,
 				name => $name,
 			);
 			%.types{$name} = $type;
@@ -596,6 +619,7 @@ class Program {
 		}
 
 		my %fields;
+		my @field-list;
 		my $size = 0;
 		for $struct-template<struct-fields><struct-field> -> $struct-field-cst {
 			my $field-type = $.type-from-cst($struct-field-cst<type>, %new-aliases);
@@ -605,15 +629,18 @@ class Program {
 				die "Duplicate field name: $field-name";
 			}
 
-			%fields{$field-name} = StructField.new(
+			my $field = StructField.new(
 				offset => $size,
 				type => $field-type,
 			);
+			%fields{$field-name} = $field;
+			@field-list.append($field);
 			$size += $field-type.size;
 		}
 
 		my $type = StructType.new(
 			fields => %fields,
+			field-list => @field-list,
 			aliases => %new-aliases,
 			methods => %(),
 			method-templates => %(),
@@ -706,6 +733,30 @@ class Program {
 		}
 	}
 
+	method type-from-brace-initializer-cst($brace-initializer-cst, %aliases) returns Type {
+		my $type-cst = $brace-initializer-cst<type>;
+		my $list-cst = $brace-initializer-cst<initializer-list>;
+		my @type-params-cst;
+		if $type-cst<type-params> {
+			@type-params-cst = $type-cst<type-params><type-param>;
+		}
+
+		if $type-cst<identifier>.Str eq "array" and +@type-params-cst == 1 {
+			if not $list-cst<sequence-initializer-list> {
+				die "'array' don't work with designated initializers";
+			}
+
+			if not @type-params-cst[0]<type> {
+				die "'array' requires its first type parameter to be a type";
+			}
+
+			my $elem-type = $.type-from-cst(@type-params-cst[0]<type>, %aliases);
+			$.get-array-type($elem-type, +$list-cst<sequence-initializer-list><expression>);
+		} else {
+			$.type-from-cst($type-cst, %aliases);
+		}
+	}
+
 	method analyze-struct-decl($struct-decl) {
 		my $name = $struct-decl<identifier>.Str;
 		if $.types{$name}:exists {
@@ -718,6 +769,7 @@ class Program {
 		}
 
 		my %fields;
+		my @field-list;
 		my $size = 0;
 		for $struct-decl<struct-fields><struct-field> -> $struct-field-cst {
 			if %.struct-templates{$name}:exists {
@@ -731,15 +783,18 @@ class Program {
 				die "Duplicate field name: $field-name";
 			}
 
-			%fields{$field-name} = StructField.new(
+			my $field = StructField.new(
 				offset => $size,
 				type => $field-type,
 			);
+			%fields{$field-name} = $field;
+			@field-list.append($field);
 			$size += $field-type.size;
 		}
 
 		%.types{$name} = StructType.new(
 			fields => %fields,
+			field-list => @field-list,
 			aliases => %(),
 			methods => %(),
 			method-templates => %(),
@@ -957,8 +1012,6 @@ class Program {
 				die "Bad bool '{$part<bool-literal>}'";
 			}
 			$temp;
-		} elsif $part<group-expression> {
-			$.compile-expr($frame, $part<group-expression><expression>, $out, %aliases);
 		} elsif $part<func-call> {
 			my $func = $.resolve-func-decl($part<func-call>, %aliases);
 
@@ -1003,6 +1056,13 @@ class Program {
 			}
 
 			$return-val;
+		} elsif $part<brace-initializer> {
+			my $type = $.type-from-brace-initializer-cst($part<brace-initializer>, %aliases);
+			my $var = $frame.push-temp($type);
+			$.compile-expr-part-to-loc($frame, $var, $part, $out, %aliases);
+			$var;
+		} elsif $part<group-expression> {
+			$.compile-expr($frame, $part<group-expression><expression>, $out, %aliases);
 		} elsif $part<identifier> {
 			$frame.get($part<identifier>.Str);
 		} else {
@@ -1035,6 +1095,75 @@ class Program {
 				$out.append(0);
 			} else {
 				die "Bad bool '{$part<bool-literal>}'";
+			}
+		} elsif $part<brace-initializer> {
+			my $init-list = $part<brace-initializer><initializer-list>;
+			if $dest.type.isa(ArrayType) {
+				if not $init-list<sequence-initializer-list> {
+					die "Array initializer must be a sequence initializer list";
+				}
+
+				my @seq = $init-list<sequence-initializer-list><expression>;
+				if +@seq != $dest.type.elem-count {
+					die "Can't initialize '$dest.type.name' with {+@seq} elements";
+				}
+
+				my $idx = 0;
+				for @seq -> $elem-expr {
+					my $loc = LocalLocation.new(
+						index => $dest.index + $idx,
+						temp => False,
+						type => $dest.type.elem,
+					);
+					$.compile-expr-to-loc($frame, $loc, $elem-expr, $out, %aliases);
+				}
+			} elsif $dest.type.isa(StructType) and $init-list<sequence-initializer-list> {
+				my @seq = $init-list<sequence-initializer-list><expression>;
+				if +@seq != +$dest.type.field-list {
+					die "Can't initialize '{$dest.type.name}' with {+@seq} elements";
+				}
+
+				for $dest.type.field-list Z @seq -> ($field, $elem-expr) {
+					my $loc = LocalLocation.new(
+						index => $dest.index + $field.offset,
+						temp => False,
+						type => $field.type,
+					);
+					$.compile-expr-to-loc($frame, $loc, $elem-expr, $out, %aliases);
+				}
+			} elsif $dest.type.isa(StructType) and $init-list<designated-initializer-list> {
+				my @seq = $init-list<designated-initializer-list><designated-initializer>;
+
+				my %initialized-fields;
+				for @seq -> $initializer {
+					my $field-name = $initializer<identifier>.Str;
+					my $elem-expr = $initializer<expression>;
+					if not $dest.type.fields{$field-name} {
+						die "Field '$field-name' not in '{$dest.type.name}'";
+					}
+
+					if %initialized-fields{$field-name}:exists {
+						die "Field '$field-name' already initialized";
+					}
+
+					my $field = $dest.type.fields{$field-name};
+
+					my $loc = LocalLocation.new(
+						index => $dest.index + $field.offset,
+						temp => False,
+						type => $field.type,
+					);
+					$.compile-expr-to-loc($frame, $loc, $elem-expr, $out, %aliases);
+					%initialized-fields{$field-name} = True;
+				}
+
+				for $dest.type.fields.keys -> $field-name {
+					if not %initialized-fields{$field-name}:exists {
+						die "Field '$field-name' not initiaized";
+					}
+				}
+			} else {
+				die "Can't brace-initialize '{$dest.type.name}'";
 			}
 		} else {
 			my $src = $.compile-expr-part($frame, $part, $out, %aliases)
@@ -1372,9 +1501,9 @@ class Program {
 	}
 
 	method compile-expr($frame, $expr, Buf $out, %aliases) returns Location {
-#		CATCH {
-#			die "{.Str}\n  in expr: ({$expr.Str})";
-#		}
+		CATCH {
+			die "{.Str}\n  in expr: ({$expr.Str})";
+		}
 
 		if $expr<bin-op> {
 			my $operator = $expr<bin-op><bin-operator>.Str;
@@ -1435,9 +1564,9 @@ class Program {
 	}
 
 	method compile-statm($frame, $statm, Buf $out, %aliases) {
-#		CATCH {
-#			die "{.Str}\n  in statm: {$statm.Str}\n";
-#		}
+		CATCH {
+			die "{.Str}\n  in statm: {$statm.Str}\n";
+		}
 
 		if $statm<block> {
 			$.compile-block($frame, $statm<block>, $out, %aliases);
