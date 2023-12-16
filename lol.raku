@@ -135,7 +135,7 @@ grammar Lol {
 	}
 
 	rule uninitialized {
-		'uninitialized' <type>
+		'uninitialized' <type>?
 	}
 
 	rule func-call {
@@ -268,6 +268,10 @@ enum LolOp <
 >;
 
 sub generate-copy(Int $dest, Int $src, Int $size, Buf $out) {
+	if $dest == $src {
+		return;
+	}
+
 	if $size == 1 {
 		$out.append(LolOp::COPY_8);
 		append-i16le($out, $dest);
@@ -289,6 +293,10 @@ sub generate-copy(Int $dest, Int $src, Int $size, Buf $out) {
 }
 
 sub generate-load(Int $dest, Int $src, Int $size, Buf $out) {
+	if $size == 0 {
+		return;
+	}
+
 	if $size == 1 {
 		$out.append(LolOp::LOAD_8);
 		append-i16le($out, $dest);
@@ -310,6 +318,10 @@ sub generate-load(Int $dest, Int $src, Int $size, Buf $out) {
 }
 
 sub generate-store(Int $dest, Int $src, Int $size, Buf $out) {
+	if $size == 0 {
+		return;
+	}
+
 	if $size == 1 {
 		$out.append(LolOp::STORE_8);
 		append-i16le($out, $dest);
@@ -413,7 +425,7 @@ class DereferenceLocation is Location {
 			append-i16le($out, $temp.index);
 			append-i16le($out, $.local.index);
 			append-u64le($out, $.offset);
-			generate-load($temp.index, $temp.index, $.type, $out);
+			generate-load($temp.index, $temp.index, $.type.size, $out);
 			$frame.change-type($temp, $.type);
 		}
 
@@ -956,6 +968,10 @@ class Program {
 
 	method compile-expr-part($frame, $part, Buf $out, %aliases) returns Location {
 		if $part<uninitialized> {
+			if not $part<uninitialized><type> {
+				die "Missing type";
+			}
+
 			$frame.push-temp($.type-from-cst($part<uninitialized><type>, %aliases));
 		} elsif $part<num-literal> {
 			my $body = $part<num-literal><num-literal-body>.Str;
@@ -1021,20 +1037,11 @@ class Program {
 			for 0..^+$func.formal-params -> $i {
 				my $param = $func.formal-params[$i];
 				$stack-bump += $param.type.size;
-				my $expr = $part<func-call><expression>[$i];
-				my $var = $.compile-expr($frame, $expr, $out, %aliases).mateialize($out);
-				if not ($var.type === $param.type) {
-					die "Function call with invalid parameter type: " ~
-					"Expected '{$param.type.name}', got '{$var.type.name}'";
-				}
 
-				if $var.temp {
-					@param-vars.append($var);
-				} else {
-					my $v = $frame.push-temp($var.type);
-					generate-copy($v.index, $var.index, $var.type.size, $out);
-					@param-vars.append($v);
-				}
+				my $expr = $part<func-call><expression>[$i];
+				my $loc = $frame.push-temp($param.type);
+				$.compile-expr-to-loc($frame, $loc, $expr, $out, %aliases);
+				@param-vars.append($loc);
 			}
 
 			$out.append(LolOp::CALL);
@@ -1072,8 +1079,12 @@ class Program {
 
 	method compile-expr-part-to-loc($frame, LocalLocation $dest, $part, Buf $out, %aliases) {
 		if $part<uninitialized> {
-			my $type = $.type-from-cst($part<uninitialized><type>, %aliases);
-			$.reconcile-types($dest.type, $type);
+			if $part<uninitialized><type> {
+				my $type = $.type-from-cst($part<uninitialized><type>, %aliases);
+				$.reconcile-types($dest.type, $type);
+			} else {
+				# Don't care, use the existing type
+			}
 		} elsif $part<num-literal> {
 			if not ($dest.type === %builtin-types<int>) {
 				die "Invalid destination type for number literal";
@@ -1377,29 +1388,15 @@ class Program {
 				my $param = $func.formal-params[$i];
 				$stack-bump += $param.type.size;
 
-				my $var;
+				my $loc = $frame.push-temp($param.type);
 				if $i == 0 {
 					my $part = $expr<method-call><expression-part>;
-					$var = $.compile-expr-part($frame, $part, $out, %aliases)
-					.materialize($frame, $out);
+					$.compile-expr-part-to-loc($frame, $loc, $part, $out, %aliases);
 				} else {
-					my $e = $expr<method-call><expression>[$i];
-					$var = $.compile-expr($frame, $e, $out, %aliases)
-					.materialize($frame, $out);
+					my $e = $expr<method-call><expression>[$i - 1];
+					$.compile-expr-to-loc($frame, $loc, $e, $out, %aliases);
 				}
-
-				if not ($var.type === $param.type) {
-					die "Method call with invalid parameter type: " ~
-					"Expected '{$param.type.name}', got '{$var.type.name}'";
-				}
-
-				if $var.temp {
-					@param-vars.append($var);
-				} else {
-					my $v = $frame.push-temp($var.type);
-					generate-copy($v.index, $var.index, $var.type.size, $out);
-					@param-vars.append($v);
-				}
+				@param-vars.append($loc);
 			}
 
 			$out.append(LolOp::CALL);
@@ -1416,8 +1413,8 @@ class Program {
 			}
 
 			while @param-vars {
-				my $var = @param-vars.pop();
-				$frame.pop-if-temp($var);
+				my $loc = @param-vars.pop();
+				$frame.pop-if-temp($loc);
 			}
 
 			$var = $return-val;
@@ -1551,7 +1548,7 @@ class Program {
 			$frame.pop-if-temp($lhs);
 		} elsif $expr<method-call-level-expr> {
 			$.compile-method-call-level-expr-to-loc(
-				$frame, $dest, $expr<method-call-level-expr>, $out, %aliases);
+				$frame, $dest, $expr<method-call-level-expr>[0], $out, %aliases);
 		} else {
 			die "Bad expression '$expr'";
 		}
