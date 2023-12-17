@@ -121,13 +121,13 @@ size_t pretty_print_instruction(unsigned char *instr)
 	size_t iptr = 0;
 	switch ((enum lolvm_op)instr[iptr++]) {
 	case LOL_SETI_8:
-		printf("SETI_8 @%i, %u\n", OP_OFFSET(0), OP_U8(2));
+		printf("SETI_8 @%i, %" PRIu8 "\n", OP_OFFSET(0), OP_U8(2));
 		return 3;
 	case LOL_SETI_32:
-		printf("SETI_32 @%i, %u\n", OP_OFFSET(0), OP_U32(2));
+		printf("SETI_32 @%i, %" PRId32 "\n", OP_OFFSET(0), OP_U32(2));
 		return 6;
 	case LOL_SETI_64:
-		printf("SETI_64 @%i, %lu\n", OP_OFFSET(0), OP_U64(2));
+		printf("SETI_64 @%i, %" PRId64 "\n", OP_OFFSET(0), OP_U64(2));
 		return 10;
 
 	case LOL_COPY_8:
@@ -140,7 +140,7 @@ size_t pretty_print_instruction(unsigned char *instr)
 		printf("COPY_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_COPY_N:
-		printf("COPY_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("COPY_N @%i, @%i, %" PRIu32 "\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
 	case LOL_ADD_8:
@@ -160,13 +160,13 @@ size_t pretty_print_instruction(unsigned char *instr)
 		return 6;
 
 	case LOL_ADDI_8:
-		printf("ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U8(4));
+		printf("ADDI_32 @%i, @%i, %" PRIu8 "\n", OP_OFFSET(0), OP_OFFSET(2), OP_U8(4));
 		return 5;
 	case LOL_ADDI_32:
-		printf("ADDI_32 @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("ADDI_32 @%i, @%i, %" PRId32 "\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 	case LOL_ADDI_64:
-		printf("ADDI_64 @%i, @%i, %lu\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
+		printf("ADDI_64 @%i, @%i, %" PRId64 "\n", OP_OFFSET(0), OP_OFFSET(2), OP_U64(4));
 		return 12;
 
 	case LOL_EQ_8:
@@ -247,7 +247,7 @@ size_t pretty_print_instruction(unsigned char *instr)
 		printf("LOAD_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_LOAD_N:
-		printf("LOAD_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("LOAD_N @%i, @%i, %" PRIu32 "\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
 	case LOL_STORE_8:
@@ -260,7 +260,7 @@ size_t pretty_print_instruction(unsigned char *instr)
 		printf("STORE_64 @%i, @%i\n", OP_OFFSET(0), OP_OFFSET(2));
 		return 4;
 	case LOL_STORE_N:
-		printf("STORE_N @%i, @%i, %u\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
+		printf("STORE_N @%i, @%i, %" PRIu32 "\n", OP_OFFSET(0), OP_OFFSET(2), OP_U32(4));
 		return 8;
 
 	case LOL_CALL:
