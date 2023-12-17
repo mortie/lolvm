@@ -173,7 +173,12 @@ grammar Lol {
 	}
 
 	rule type {
-		<identifier> <type-params>?
+		| <typeof>
+		| <identifier> <type-params>?
+	}
+
+	rule typeof {
+		'typeof' <expression>
 	}
 
 	rule type-params {
@@ -562,7 +567,7 @@ class Program {
 	has %.struct-templates;
 	has FuncDecl %.funcs;
 	has %.func-templates;
-	has FuncDecl @.materialized-func-templates;
+	has FuncDecl %.materialized-func-templates;
 
 	has FuncCallFixup @.func-call-fixups;
 	has FuncCallFixup @.func-template-call-fixups;
@@ -639,7 +644,7 @@ class Program {
 		my @field-list;
 		my $size = 0;
 		for $struct-template<struct-fields><struct-field> -> $struct-field-cst {
-			my $field-type = $.type-from-cst($struct-field-cst<type>, %new-aliases);
+			my $field-type = $.type-from-cst($struct-field-cst<type>, %new-aliases, StackFrame.new());
 			my $field-name = $struct-field-cst<identifier>.Str;
 
 			if %fields{$field-name}:exists {
@@ -668,11 +673,11 @@ class Program {
 		return $type;
 	}
 
-	method type-params-from-cst($type-params-cst, %aliases) {
+	method type-params-from-cst($type-params-cst, %aliases, $frame) {
 		my @params;
 		for $type-params-cst<type-param> -> $param {
 			my $alias;
-			if $param<type> {
+			if $param<type> and $param<type><identifier> {
 				my $type-name = $param<type><identifier>.Str;
 				if %aliases{$type-name} and not $param<type>[0] {
 					$alias = %aliases{$type-name};
@@ -682,7 +687,7 @@ class Program {
 			if $alias.defined {
 				@params.append($alias);
 			} elsif $param<type> {
-				@params.append($.type-from-cst($param<type>, %aliases));
+				@params.append($.type-from-cst($param<type>, %aliases, $frame));
 			} elsif $param<type-param-int> {
 				@params.append(+$param<type-param-int>);
 			} else {
@@ -692,7 +697,11 @@ class Program {
 		@params;
 	}
 
-	method type-from-cst($type-cst, %aliases) returns Type {
+	method type-from-cst($type-cst, %aliases, $frame) returns Type {
+		if $type-cst<typeof> {
+			return $.get-expr-type($frame, $type-cst<typeof><expression>, %aliases);
+		}
+
 		my $name = $type-cst<identifier>.Str;
 
 		if %aliases{$name}:exists and not $type-cst[0] {
@@ -708,7 +717,7 @@ class Program {
 
 		my @params;
 		if $type-cst<type-params> {
-			@params = @.type-params-from-cst($type-cst<type-params>, %aliases);
+			@params = @.type-params-from-cst($type-cst<type-params>, %aliases, $frame);
 		}
 
 		if $name eq "ptr" {
@@ -750,7 +759,7 @@ class Program {
 		}
 	}
 
-	method type-from-brace-initializer-cst($brace-initializer-cst, %aliases) returns Type {
+	method type-from-brace-initializer-cst($brace-initializer-cst, %aliases, $frame) returns Type {
 		my $type-cst = $brace-initializer-cst<type>;
 		my $list-cst = $brace-initializer-cst<initializer-list>;
 		my @type-params-cst;
@@ -767,10 +776,10 @@ class Program {
 				die "'array' requires its first type parameter to be a type";
 			}
 
-			my $elem-type = $.type-from-cst(@type-params-cst[0]<type>, %aliases);
+			my $elem-type = $.type-from-cst(@type-params-cst[0]<type>, %aliases, $frame);
 			$.get-array-type($elem-type, +$list-cst<sequence-initializer-list><expression>);
 		} else {
-			$.type-from-cst($type-cst, %aliases);
+			$.type-from-cst($type-cst, %aliases, $frame);
 		}
 	}
 
@@ -793,7 +802,7 @@ class Program {
 				die "A function template named $name already exists!";
 			}
 
-			my $field-type = $.type-from-cst($struct-field-cst<type>, %());
+			my $field-type = $.type-from-cst($struct-field-cst<type>, %(), StackFrame.new());
 			my $field-name = $struct-field-cst<identifier>.Str;
 
 			if %fields{$field-name}:exists {
@@ -821,12 +830,12 @@ class Program {
 	}
 
 	method create-func-decl($name, $func-decl-cst, %aliases) {
-		my $return-type = $.type-from-cst($func-decl-cst<type>, %aliases);
+		my $return-type = $.type-from-cst($func-decl-cst<type>, %aliases, StackFrame.new());
 		my $return-index = -$return-type.size;
 
 		my @formal-params;
 		for $func-decl-cst<formal-params>[0] -> $formal-param-cst {
-			my $type = $.type-from-cst($formal-param-cst<type>, %aliases);
+			my $type = $.type-from-cst($formal-param-cst<type>, %aliases, StackFrame.new());
 			$return-index -= $type.size;
 			@formal-params.push(FuncParam.new(
 				type => $type,
@@ -915,7 +924,7 @@ class Program {
 		$lhs;
 	}
 
-	method resolve-func-decl($func-call-cst, %aliases) returns FuncDecl {
+	method resolve-func-decl($func-call-cst, %aliases, $frame) returns FuncDecl {
 		my $name = $func-call-cst<identifier>.Str;
 
 		if %.funcs{$name} {
@@ -931,7 +940,7 @@ class Program {
 
 			my $func-decl-cst = %.func-templates{$name};
 
-			my @params = @.type-params-from-cst($func-call-cst<type-params>, %aliases);
+			my @params = @.type-params-from-cst($func-call-cst<type-params>, %aliases, $frame);
 			$name ~= "[";
 			my $first = True;
 			for @params -> $param {
@@ -977,9 +986,9 @@ class Program {
 				die "Missing type";
 			}
 
-			$frame.push-temp($.type-from-cst($part<uninitialized><type>, %aliases));
+			$frame.push-temp($.type-from-cst($part<uninitialized><type>, %aliases, $frame));
 		} elsif $part<sizeof> {
-			my $type = $.type-from-cst($part<sizeof><type>, %aliases);
+			my $type = $.type-from-cst($part<sizeof><type>, %aliases, $frame);
 			my $var = $frame.push-temp(%builtin-types<long>);
 			$out.append(LolOp::SETI_64);
 			append-i16le($out, $var.index);
@@ -1041,7 +1050,7 @@ class Program {
 			}
 			$temp;
 		} elsif $part<func-call> {
-			my $func = $.resolve-func-decl($part<func-call>, %aliases);
+			my $func = $.resolve-func-decl($part<func-call>, %aliases, $frame);
 
 			my $return-val = $frame.push-temp($func.return-var.type);
 			my $stack-bump = $frame.idx;
@@ -1076,7 +1085,7 @@ class Program {
 
 			$return-val;
 		} elsif $part<brace-initializer> {
-			my $type = $.type-from-brace-initializer-cst($part<brace-initializer>, %aliases);
+			my $type = $.type-from-brace-initializer-cst($part<brace-initializer>, %aliases, $frame);
 			my $var = $frame.push-temp($type);
 			$.compile-expr-part-to-loc($frame, $var, $part, $out, %aliases);
 			$var;
@@ -1092,13 +1101,13 @@ class Program {
 	method compile-expr-part-to-loc($frame, LocalLocation $dest, $part, Buf $out, %aliases) {
 		if $part<uninitialized> {
 			if $part<uninitialized><type> {
-				my $type = $.type-from-cst($part<uninitialized><type>, %aliases);
+				my $type = $.type-from-cst($part<uninitialized><type>, %aliases, $frame);
 				$.reconcile-types($dest.type, $type);
 			} else {
 				# Don't care, use the existing type
 			}
 		} elsif $part<sizeof> {
-			my $type = $.type-from-cst($part<sizeof><type>);
+			my $type = $.type-from-cst($part<sizeof><type>, $frame);
 			$.reconcile-types($dest.type, %builtin-types<long>);
 			$out.append(LolOp::SETI_64);
 			append-i16le($out, $dest.index);
@@ -1562,8 +1571,17 @@ class Program {
 	}
 
 	method get-expr-type($frame, $expr, %aliases) returns Type {
+		my @func-call-fixups = @.func-call-fixups.clone();
+		my @func-template-call-fixups = @.func-template-call-fixups.clone();
+		my %materialized-func-templates = %.materialized-func-templates.clone();
+
 		my $var = $.compile-expr($frame, $expr, Buf.new(), %aliases);
 		$frame.pop-if-temp($var);
+
+		@.func-call-fixups = @func-call-fixups;
+		@.func-template-call-fixups = @func-template-call-fixups;
+		%.materialized-func-templates = %materialized-func-templates;
+
 		$var.type;
 	}
 
@@ -1767,6 +1785,8 @@ class Program {
 				$func = %.funcs{$fixup.name};
 			} elsif %.materialized-func-templates{$fixup.name} {
 				$func = %.materialized-func-templates{$fixup.name};
+			} else {
+				die "Have func-call-fixup for non-existent function {$fixup.name}"
 			}
 
 			if not $func.offset.defined {
