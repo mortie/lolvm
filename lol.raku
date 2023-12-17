@@ -126,6 +126,7 @@ grammar Lol {
 
 	rule expression-part {
 		| <uninitialized>
+		| <sizeof>
 		| <num-literal>
 		| <bool-literal>
 		| <func-call>
@@ -136,6 +137,10 @@ grammar Lol {
 
 	rule uninitialized {
 		'uninitialized' <type>?
+	}
+
+	rule sizeof {
+		'sizeof' <type>
 	}
 
 	rule func-call {
@@ -973,6 +978,13 @@ class Program {
 			}
 
 			$frame.push-temp($.type-from-cst($part<uninitialized><type>, %aliases));
+		} elsif $part<sizeof> {
+			my $type = $.type-from-cst($part<sizeof><type>, %aliases);
+			my $var = $frame.push-temp(%builtin-types<long>);
+			$out.append(LolOp::SETI_64);
+			append-i16le($out, $var.index);
+			append-u64le($out, $type.size);
+			$var;
 		} elsif $part<num-literal> {
 			my $body = $part<num-literal><num-literal-body>.Str;
 
@@ -1085,19 +1097,14 @@ class Program {
 			} else {
 				# Don't care, use the existing type
 			}
-		} elsif $part<num-literal> {
-			if not ($dest.type === %builtin-types<int>) {
-				die "Invalid destination type for number literal";
-			}
-
-			$out.append(LolOp::SETI_32);
+		} elsif $part<sizeof> {
+			my $type = $.type-from-cst($part<sizeof><type>);
+			$.reconcile-types($dest.type, %builtin-types<long>);
+			$out.append(LolOp::SETI_64);
 			append-i16le($out, $dest.index);
-			append-i32le($out, +$part<num-literal>.Str);
+			append-u64le($out, $type.size);
 		} elsif $part<bool-literal> {
-			if not ($dest.type === %builtin-types<bool>) {
-				die "Invalid destination type for bool";
-			}
-
+			$.reconcile-types($dest.type, %builtin-types<bool>);
 			$out.append(LolOp::SETI_8);
 			append-i16le($out, $dest.index);
 			if $part<bool-literal>.Str eq "true" {
